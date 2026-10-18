@@ -92,9 +92,11 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 - **Fix:** publish `infoFrames`/`infoRate` (already atomics) inside
   `Deck::load` on the message thread; buffer adoption still happens at the
   first render — safe, because no audio is produced while paused.
-- **Validation:** extend a lean test (load into a deck, assert
-  `getLengthSeconds()` without ever rendering) + keep `null_render` and
-  `keylock_test` green (AGENTS.md rule 9).
+- **Validation (implemented):** `Tests/DeckLoadTest.cpp` (`deckload_test`)
+  loads synthetic tracks while paused and asserts `getNumFrames()` /
+  `getLengthSeconds()` without ever calling `render()`, including a paused
+  re-load that changes the length and the zero-rate fallback; `null_render`
+  and `keylock_test` stay green (AGENTS.md rule 9).
 
 ### S5 — synchronous decode/analyze/BPM on the message thread  (M, UX-critical)
 - **Where:** `AudioEngine::loadFile` (`Source/AudioEngine.cpp:278-297`)
@@ -173,15 +175,19 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 ### S9 — VST3 discovery is Windows-only and synchronous  (M)
 - **Where:** `FxRack::scanVst3` (`Source/FxRack.cpp:14-28`) hardcodes
   `C:\Program Files\...` paths; a directory walk on the message thread.
-- **Fix:** platform-aware search paths — Linux: `~/.vst3`,
+- **Fix (implemented):** platform-aware search paths — Linux: `~/.vst3`,
   `/usr/lib/vst3`, `/usr/local/lib/vst3`, `/usr/lib/x86_64-linux-gnu/vst3`,
   plus `$VST3_PATH` entries (colon-separated); keep Windows paths under
-  `#ifdef _WIN32`. Move the walk off the message thread (S5 worker or a
-  dedicated one-shot job) with a cached result. Documented honestly in the
-  GUI design/CI docs (FX view is out of scope for this assignment; the API
-  must be correct first).
-- **Validation:** unit test over a temp-dir fixture with fake `.vst3`
-  bundle names (path collection only — no loading), CI-only.
+  `#ifdef _WIN32`. The walk moved off the message thread: path collection
+  is the JUCE-free `lean::collectVst3Bundles` (`Source/FxScanPaths.h`),
+  run as a single-flight job on the S5 worker, cached in
+  `AudioEngine::fxPlugins()` (message thread) — `pickAuxPlugin()` shows the
+  cache and requests a background refresh. FX view UX stays out of scope
+  (API correctness first).
+- **Validation (implemented):** `Tests/FxScanTest.cpp` (`fxscan_test`) —
+  temp-dir fixture with fake `.vst3` bundle names (files, directories, mixed
+  case), non-recursive exclusion, missing-root tolerance, sorted
+  `name|path` output; path collection only, no loading, CI-only.
 
 ### S10 — aux bypass/empty slots cut tails  (L, documented residual)
 - **Where:** `Source/FxRack.cpp:179-183` writes silence for

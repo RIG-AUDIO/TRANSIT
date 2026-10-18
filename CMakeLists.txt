@@ -281,6 +281,15 @@ add_executable(LoadScheduleTest Tests/LoadScheduleTest.cpp)
 target_include_directories(LoadScheduleTest PRIVATE Source)
 add_test(NAME loadschedule_test COMMAND LoadScheduleTest)
 
+add_executable(DeckLoadTest Tests/DeckLoadTest.cpp Source/Deck.cpp)
+target_include_directories(DeckLoadTest PRIVATE Source)
+target_link_libraries(DeckLoadTest PRIVATE signalsmith-stretch)
+add_test(NAME deckload_test COMMAND DeckLoadTest)
+
+add_executable(FxScanTest Tests/FxScanTest.cpp)
+target_include_directories(FxScanTest PRIVATE Source)
+add_test(NAME fxscan_test COMMAND FxScanTest)
+
 add_executable(LibraryTest Tests/LibraryTest.cpp Source/Library.cpp)
 target_include_directories(LibraryTest PRIVATE Source)
 target_link_libraries(LibraryTest PRIVATE sqlite3)
@@ -393,8 +402,8 @@ target_compile_definitions(FxProbe PRIVATE
 # source file (above) so upstream sources are never gated by it.
 # ---------------------------------------------------------------------------
 foreach(t NullRender DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
-          LoadScheduleTest LibraryTest MidiMapTest RecorderTest AnalyzeTest
-          SyncTest DspBench)
+          LoadScheduleTest DeckLoadTest FxScanTest LibraryTest MidiMapTest
+          RecorderTest AnalyzeTest SyncTest DspBench)
   if(MSVC)
     target_compile_options(${t} PRIVATE /WX)
   else()

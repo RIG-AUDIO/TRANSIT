@@ -5,6 +5,8 @@
 #include <chrono>
 #include <thread>
 
+#include "FxScanPaths.h"
+
 FxRack::FxRack() {
     retired.reserve(kRetireReserve); // capacity for the no-realloc push path
 }
@@ -15,25 +17,23 @@ FxRack::~FxRack() {
 }
 
 juce::StringArray FxRack::scanVst3() {
-    juce::StringArray names;
-    juce::VST3PluginFormat format;
-#ifdef _WIN32
-    juce::FileSearchPath searchPaths(
-        "C:\\Program Files\\Common Files\\VST3;C:\\Program Files (x86)\\Common Files\\VST3");
-#else
-    // Linux-first bundle locations (user, system, distro multiarch) plus the
-    // conventional VST3_PATH override (colon-separated, GNU/POSIX style).
-    juce::String entries;
-    auto add = [&entries](const juce::String& s) {
-        if (s.isEmpty())
-            return;
-        if (entries.isNotEmpty())
-            entries << ':';
-        entries << s;
+    // Root list lives here (JUCE: home dir, environment); the walk itself
+    // is the JUCE-free lean::collectVst3Bundles — path collection only, no
+    // loading (review S9; unit-tested in Tests/FxScanTest.cpp). Callers run
+    // this on the AudioEngine worker, never on the message thread.
+    std::vector<std::string> roots;
+    auto add = [&roots](std::string s) {
+        if (!s.empty())
+            roots.push_back(std::move(s));
     };
+#ifdef _WIN32
+    add("C:\\Program Files\\Common Files\\VST3");
+    add("C:\\Program Files (x86)\\Common Files\\VST3");
+#else
     add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
             .getChildFile(".vst3")
-            .getFullPathName());
+            .getFullPathName()
+            .toStdString());
     add("/usr/lib/vst3");
     add("/usr/local/lib/vst3");
     add("/usr/lib64/vst3");
@@ -43,23 +43,19 @@ juce::StringArray FxRack::scanVst3() {
     add("/Library/Audio/Plug-Ins/VST3");
     add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
             .getChildFile("Library/Audio/Plug-Ins/VST3")
-            .getFullPathName());
+            .getFullPathName()
+            .toStdString());
 #endif
     const auto extra =
         juce::SystemStats::getEnvironmentVariable("VST3_PATH", juce::String());
     for (const auto& e : juce::StringArray::fromTokens(extra, ":", ""))
         if (e.isNotEmpty())
-            add(e.trim());
-    juce::FileSearchPath searchPaths(entries);
+            add(e.trim().toStdString());
 #endif
-    for (int i = 0; i < searchPaths.getNumPaths(); ++i) {
-        juce::Array<juce::File> found;
-        searchPaths[i].findChildFiles(found, juce::File::findFilesAndDirectories,
-                                      false, "*.vst3");
-        for (const auto& f : found)
-            names.add(f.getFileNameWithoutExtension() + "|" + f.getFullPathName());
-    }
-    names.sort(true);
+    const auto entries = lean::collectVst3Bundles(roots);
+    juce::StringArray names;
+    for (const auto& e : entries)
+        names.add(juce::String::fromUTF8(e.c_str(), (int)e.size()));
     return names;
 }
 

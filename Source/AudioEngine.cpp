@@ -333,6 +333,8 @@ void AudioEngine::workerLoop() {
         }
         if (job.kind == LoadJob::Kind::Index)
             runIndexJob(job);
+        else if (job.kind == LoadJob::Kind::ScanFx)
+            runScanFxJob();
         else
             runLoadJob(job);
     }
@@ -352,6 +354,31 @@ void AudioEngine::runIndexJob(const LoadJob& job) {
                 more = true;
     }
     scanning.store(!more, std::memory_order_release);
+}
+
+void AudioEngine::refreshFxScan() {
+    if (fxScanActive.exchange(true, std::memory_order_acq_rel))
+        return; // one discovery walk in flight or queued
+    LoadJob job;
+    job.kind = LoadJob::Kind::ScanFx;
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        jobs.push_back(std::move(job));
+    }
+    jobCv.notify_one();
+}
+
+void AudioEngine::runScanFxJob() {
+    // The walk itself is JUCE-free (FxScanPaths) and runs here, off the
+    // message thread; root collection uses thread-safe JUCE file/env calls.
+    juce::StringArray found = fxRack.scanVst3();
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        fxScanResult = std::move(found);
+        fxResultReady = true;
+    }
+    fxScanActive.store(false, std::memory_order_release);
+    triggerAsyncUpdate(); // commit lands on the message thread
 }
 
 void AudioEngine::runLoadJob(const LoadJob& job) {
@@ -404,6 +431,8 @@ void AudioEngine::runLoadJob(const LoadJob& job) {
 void AudioEngine::handleAsyncUpdate() {
     LoadResult local[2];
     bool ready[2] = { false, false };
+    juce::StringArray newFxList;
+    bool fxReady = false;
     {
         std::lock_guard<std::mutex> lock(resultMutex);
         for (int d = 0; d < 2; ++d) {
@@ -413,7 +442,14 @@ void AudioEngine::handleAsyncUpdate() {
                 ready[d] = true;
             }
         }
+        if (fxResultReady) {
+            newFxList = std::move(fxScanResult);
+            fxResultReady = false;
+            fxReady = true;
+        }
     }
+    if (fxReady)
+        fxList = std::move(newFxList); // message thread owns the cache
     for (int d = 0; d < 2; ++d) {
         if (!ready[d])
             continue;

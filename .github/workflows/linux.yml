@@ -132,8 +132,8 @@ jobs:
         run: >
           cmake --build build-asan --parallel --
           NullRender DecodeTest MixerTest KeylockTest WaveformTest
-          MidiQueueTest LoadScheduleTest LibraryTest MidiMapTest
-          RecorderTest AnalyzeTest SyncTest
+          MidiQueueTest LoadScheduleTest DeckLoadTest FxScanTest
+          LibraryTest MidiMapTest RecorderTest AnalyzeTest SyncTest
 
       - name: Test under sanitizers
         run: ctest --test-dir build-asan --output-on-failure

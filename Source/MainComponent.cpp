@@ -302,6 +302,9 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         engine.play(deck, true);
         updateDeckHeader(deck);
     };
+    // Warm the VST3 cache off the message thread before the FX menu opens
+    // (review S9).
+    engine.refreshFxScan();
 
     addAndMakeVisible(midiCombo);
     addAndMakeVisible(learnButton);
@@ -589,7 +592,10 @@ void MainComponent::pickAuxPlugin(int aux) {
         saveSettings();
     });
     menu.addSeparator();
-    const auto found = engine.scanAuxPlugins();
+    // Cached discovery (review S9): the walk already ran on the worker;
+    // kick a background refresh so newly installed plugins show next time.
+    const auto found = engine.fxPlugins();
+    engine.refreshFxScan();
     int id = 1;
     for (const auto& entry : found) {
         const auto display = entry.upToFirstOccurrenceOf("|", false, false);
@@ -610,8 +616,11 @@ void MainComponent::pickAuxPlugin(int aux) {
         if (++id > 200)
             break; // sanity cap on menu size
     }
-    if (found.isEmpty())
-        menu.addItem("(no VST3 found)", false, false, [] {});
+    if (found.isEmpty()) {
+        const bool scanning = engine.fxScanRunning();
+        menu.addItem(scanning ? "(scanning for VST3...)" : "(no VST3 found)",
+                     false, false, [] {});
+    }
     menu.showMenuAsync(juce::PopupMenu::Options().withParentComponent(this));
 }
 

@@ -253,7 +253,15 @@ public:
     juce::String auxPath(int aux) const { return fxRack.slotPath(aux); }
     bool auxHasEditor(int aux) const { return fxRack.hasEditor(aux); }
     void showAuxEditor(int aux) { fxRack.showEditor(aux); }
-    juce::StringArray scanAuxPlugins() { return fxRack.scanVst3(); }
+    // Async VST3 discovery (review S9): the directory walk runs on the
+    // worker; fxPlugins() returns the message-thread cache (empty until the
+    // first scan commits). refreshFxScan() is single-flight — at most one
+    // walk queued at a time.
+    void refreshFxScan();
+    juce::StringArray fxPlugins() const { return fxList; } // message thread
+    bool fxScanRunning() const {
+        return fxScanActive.load(std::memory_order_acquire);
+    }
     void pumpFx() { fxRack.pumpRetired(); }
     void prepareFx(double rate) {
         // Prepare plugins for the REAL device block size: a 1024 assumption
@@ -309,7 +317,7 @@ private:
     // (guarded by resultMutex). Nothing in here is ever touched by the
     // audio thread.
     struct LoadJob {
-        enum class Kind { Load, Index };
+        enum class Kind { Load, Index, ScanFx };
         Kind kind = Kind::Load;
         int deck = 0;
         uint64_t token = 0;
@@ -331,6 +339,7 @@ private:
     void workerLoop();
     void runLoadJob(const LoadJob& job);
     void runIndexJob(const LoadJob& job);
+    void runScanFxJob();
     void handleAsyncUpdate() override;
 
     juce::AudioDeviceManager deviceManager;
@@ -357,6 +366,10 @@ private:
     std::thread worker;
     std::atomic<bool> scanning{ false };
     std::atomic<int> lastScanCount{ -1 };
+    std::atomic<bool> fxScanActive{ false }; // single-flight ScanFx gate
+    juce::StringArray fxList;      // message thread only (committed cache)
+    juce::StringArray fxScanResult; // worker write; guarded by resultMutex
+    bool fxResultReady = false;     // guarded by resultMutex
     bool dbReady = false;
     bool fileLoaded[2] = { false, false };
     bool fourOuts = false;
