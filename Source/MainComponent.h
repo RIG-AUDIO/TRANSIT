@@ -35,10 +35,14 @@ private:
         void zoomOut();
 
     private:
-        // Visible window in seconds; last entry (0.0) means whole track.
-        static constexpr double zooms[8] = { 4.0, 8.0, 16.0, 32.0,
-                                            64.0, 128.0, 256.0, 0.0 };
-        int zoomIdx = 3; // 32 s, Traktor-like default scope
+        void paintOverview(juce::Graphics& g, int W, int mainH, int stripeH,
+                           double len, double pos);
+        static constexpr int kStripeHeight = 14; // whole-track overview bar
+        // Window this view last rendered; mouse seek maps through it (W3).
+        // windowSpan == 0 until the first paint -> whole-track fallback.
+        double windowStart = 0.0;
+        double windowSpan = 0.0;
+        int zoomIdx = 3; // 32 s, Traktor-like default scope (lean::kZoomSeconds)
         AudioEngine& engine;
         int deck;
     };

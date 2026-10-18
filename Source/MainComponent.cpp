@@ -10,13 +10,19 @@ MainComponent::WaveformView::WaveformView(AudioEngine& e, int d)
     : engine(e), deck(d) {}
 
 void MainComponent::WaveformView::zoomIn() {
-    if (zoomIdx > 0)
-        --zoomIdx;
+    const int idx = lean::clampZoomIndex(zoomIdx - 1);
+    if (idx != zoomIdx) {
+        zoomIdx = idx;
+        repaint(); // W4: zoom changes repaint explicitly, not via the timer
+    }
 }
 
 void MainComponent::WaveformView::zoomOut() {
-    if (zoomIdx < 7)
-        ++zoomIdx;
+    const int idx = lean::clampZoomIndex(zoomIdx + 1);
+    if (idx != zoomIdx) {
+        zoomIdx = idx;
+        repaint(); // W4
+    }
 }
 
 void MainComponent::WaveformView::mouseWheelMove(const juce::MouseEvent&,
@@ -29,41 +35,128 @@ void MainComponent::WaveformView::mouseWheelMove(const juce::MouseEvent&,
 
 void MainComponent::WaveformView::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff0a0d10));
-    const auto& wave = engine.getWaveform(deck);
     const int W = getWidth();
     const int H = getHeight();
+    const int stripe = (H >= 48) ? kStripeHeight : 0;
+    const int mainH = H - stripe;
+    const auto& wave = engine.getWaveform(deck);
     const double len = engine.getLengthSeconds(deck);
-    if (wave.peaks.empty() || len <= 0.0 || W <= 0) {
+    if (wave.valid() && len > 0.0 && W > 0 && mainH > 0) {
+        // Scrolling window centered on the playhead (clamped to the track).
+        const double pos = engine.getPositionSeconds(deck);
+        const double span = lean::zoomSpanSeconds(zoomIdx, len);
+        double start = pos - span * 0.35; // playhead ~1/3 in, Traktor-style
+        start = juce::jlimit(0.0, std::max(0.0, len - span), start);
+        windowStart = start; // W3: record the exact window this frame draws
+        windowSpan = span;   // so click-seek uses the identical formula
+        for (int x = 0; x < W; ++x) {
+            const double t0 = start + span * (double)x / W;
+            const double t1 = start + span * (double)(x + 1) / W;
+            float mn = 0.0f, mx = 0.0f;
+            wave.aggregate(t0, t1, mn, mx); // W2: LOD min/max per pixel
+            mn = juce::jlimit(-1.0f, 1.0f, mn);
+            mx = juce::jlimit(-1.0f, 1.0f, mx);
+            const int mid = mainH / 2;
+            const int half = juce::jmax(1, mainH / 2 - 2);
+            const int yTop = mid - (int)((double)mx * (double)half);
+            const int yBot = mid - (int)((double)mn * (double)half);
+            const bool played = t0 < pos;
+            g.setColour(played ? DJLook::cyan.withAlpha(0.35f) : DJLook::cyan);
+            g.fillRect(x, juce::jmin(yTop, yBot), 1, juce::jmax(1, yBot - yTop));
+        }
+        const double posX = (pos - start) / span * (double)W;
+        g.setColour(DJLook::accent);
+        g.fillRect(juce::jlimit(0, W - 2, (int)posX), 0, 2, mainH);
+    } else {
         g.setColour(DJLook::dimInk);
-        g.drawText("Drop a track - double-click the library",
-                   getLocalBounds().reduced(8), juce::Justification::centred);
-        return;
+        juce::String text;
+        switch (static_cast<lean::LoadState>(engine.deckState(deck))) {
+            case lean::LoadState::Empty:
+                text = "Drop a track - double-click the library";
+                break;
+            case lean::LoadState::Loading: text = "Loading..."; break;
+            case lean::LoadState::Analyzing: text = "Analyzing..."; break;
+            case lean::LoadState::Ready:
+                text = "Drop a track - double-click the library";
+                break;
+            case lean::LoadState::Error: text = "Load failed"; break;
+        }
+        const int msgH = mainH > 0 ? mainH : H;
+        g.drawText(text, juce::Rectangle<int>(0, 0, W, msgH).reduced(8),
+                   juce::Justification::centred);
     }
-    // Scrolling window centered on the playhead (clamped to the track).
-    const double pos = engine.getPositionSeconds(deck);
-    double span = zooms[zoomIdx];
-    if (span <= 0.0 || span >= len)
-        span = len;
-    double start = pos - span * 0.35; // playhead ~1/3 in, Traktor-style
-    start = juce::jlimit(0.0, std::max(0.0, len - span), start);
-    const int n = (int)wave.peaks.size();
-    for (int x = 0; x < W; ++x) {
-        const double t = start + span * (double)x / W;
-        const int pi = juce::jlimit(0, n - 1, (int)(t / len * n));
-        const float peak = wave.peaks[(size_t)pi];
-        const int h = juce::jmin(H - 4, (int)(peak * (float)H));
-        const bool played = t < pos;
-        g.setColour(played ? DJLook::cyan.withAlpha(0.35f) : DJLook::cyan);
-        g.fillRect(x, (H - h) / 2, 1, h);
+    if (stripe > 0)
+        paintOverview(g, W, mainH, stripe, len,
+                      engine.getPositionSeconds(deck));
+}
+
+// W5: whole-track overview stripe rendered from the pyramid, with its own
+// playhead marker and the S5 load state while no waveform is committed yet.
+void MainComponent::WaveformView::paintOverview(juce::Graphics& g, int W,
+                                                int mainH, int stripeH,
+                                                double len, double pos) {
+    const juce::Rectangle<int> bar(0, mainH, W, stripeH);
+    g.setColour(juce::Colour(0xff12161b));
+    g.fillRect(bar);
+    const auto& wave = engine.getWaveform(deck);
+    if (wave.valid() && len > 0.0 && W > 0) {
+        for (int x = 0; x < W; ++x) {
+            const double t0 = len * (double)x / W;
+            const double t1 = len * (double)(x + 1) / W;
+            float mn = 0.0f, mx = 0.0f;
+            wave.aggregate(t0, t1, mn, mx);
+            mn = juce::jlimit(-1.0f, 1.0f, mn);
+            mx = juce::jlimit(-1.0f, 1.0f, mx);
+            const int mid = mainH + stripeH / 2;
+            const int half = juce::jmax(1, stripeH / 2 - 1);
+            const int yTop = mid - (int)((double)mx * (double)half);
+            const int yBot = mid - (int)((double)mn * (double)half);
+            const bool played = t1 <= pos;
+            g.setColour(played ? DJLook::cyan.withAlpha(0.45f)
+                               : DJLook::cyan.withAlpha(0.75f));
+            g.fillRect(x, juce::jmin(yTop, yBot), 1, juce::jmax(1, yBot - yTop));
+        }
+        const int px = juce::jlimit(0, W - 1, (int)(pos / len * (double)W));
+        g.setColour(DJLook::accent);
+        g.fillRect(px, mainH, 2, stripeH);
+    } else {
+        juce::String text;
+        switch (static_cast<lean::LoadState>(engine.deckState(deck))) {
+            case lean::LoadState::Empty: break;
+            case lean::LoadState::Loading: text = "Loading..."; break;
+            case lean::LoadState::Analyzing: text = "Analyzing..."; break;
+            case lean::LoadState::Ready: break;
+            case lean::LoadState::Error: break;
+        }
+        if (text.isNotEmpty()) {
+            g.setColour(DJLook::dimInk);
+            g.drawText(text, bar.reduced(4, 0), juce::Justification::centred);
+        }
     }
-    const double posX = (pos - start) / span * W;
-    g.setColour(DJLook::accent);
-    g.fillRect(juce::jlimit(0, W - 2, (int)posX), 0, 2, H);
 }
 
 void MainComponent::WaveformView::mouseDown(const juce::MouseEvent& event) {
-    if (getWidth() > 0)
-        engine.seekFraction(deck, (double)event.x / getWidth());
+    const int W = getWidth();
+    const int H = getHeight();
+    const int stripe = (H >= 48) ? kStripeHeight : 0;
+    if (W <= 0)
+        return;
+    if (stripe > 0 && event.y >= H - stripe) {
+        // W5: overview stripe seeks across the whole track, zoom-independent.
+        engine.seekFraction(
+            deck, juce::jlimit(0.0, 1.0, (double)event.x / (double)W));
+        return;
+    }
+    const double len = engine.getLengthSeconds(deck);
+    if (len <= 0.0)
+        return;
+    // W3: map through the exact window paint last rendered; before the first
+    // paint fall back to the whole track.
+    const double start = windowSpan > 0.0 ? windowStart : 0.0;
+    const double span = windowSpan > 0.0 ? windowSpan : len;
+    const double t = juce::jlimit(
+        0.0, len, lean::seekTimeFromX(start, span, (double)event.x, (double)W));
+    engine.seekFraction(deck, t / len);
 }
 
 void MainComponent::CueHold::mouseDown(const juce::MouseEvent&) {

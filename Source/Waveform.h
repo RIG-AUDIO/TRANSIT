@@ -117,7 +117,7 @@ inline Waveform buildWaveform(const float* interleavedStereo,
     n = std::clamp<std::int64_t>(n, 1024, 524288);
     n = std::min<std::int64_t>(n, numFrames);
 
-    Level lvl0;
+    Waveform::Level lvl0;
     lvl0.mins.assign((std::size_t)n, std::numeric_limits<float>::max());
     lvl0.maxs.assign((std::size_t)n, -std::numeric_limits<float>::max());
     for (std::int64_t f = 0; f < numFrames; ++f) {
@@ -142,7 +142,7 @@ inline Waveform buildWaveform(const float* interleavedStereo,
     while (w.levels.back().mins.size() > 1) {
         const std::size_t n0 = w.levels.back().mins.size();
         const std::size_t n1 = (n0 + 1) / 2;
-        Level next;
+        Waveform::Level next;
         next.mins.resize(n1);
         next.maxs.resize(n1);
         for (std::size_t i = 0; i < n1; ++i) {

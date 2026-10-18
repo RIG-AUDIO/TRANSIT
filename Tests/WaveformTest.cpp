@@ -375,7 +375,7 @@ int run() {
     // --- Non-finite input: excluded from the payload, never propagated. ---
     {
         const std::int64_t n = 480; // one bucket per frame
-        const float nan = std::nan("");
+        const float nan = std::nanf("");
         std::vector<float> allNan((size_t)n * 2);
         for (std::size_t i = 0; i < (size_t)n; ++i) {
             allNan[i * 2] = nan;
