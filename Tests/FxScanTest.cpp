@@ -5,6 +5,7 @@
 // case, missing roots, and a nested bundle that must NOT be found.
 #include "FxScanPaths.h"
 
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -59,8 +60,16 @@ int run() {
                 txtSeen = true;
             if (p.rfind(dir.string(), 0) != 0)
                 pathsOk = false;
-            if (p.size() < 5 || p.substr(p.size() - 5) != ".vst3")
+            // Suffix is case-insensitive (as the collector accepts them).
+            if (p.size() < 5)
                 pathsOk = false;
+            else {
+                std::string sfx = p.substr(p.size() - 5);
+                for (char& c : sfx)
+                    c = (char)std::tolower((unsigned char)c);
+                if (sfx != ".vst3")
+                    pathsOk = false;
+            }
         }
         check(!nestedSeen, "nested bundle not collected (non-recursive)");
         check(!txtSeen, "non-vst3 files ignored");
