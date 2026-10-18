@@ -354,6 +354,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const*, int,
         mixer.render(left, right ? right : left, phL, phR, numSamples);
     const int64_t t1 = juce::Time::getHighResolutionTicks();
     blockFrame += (uint64_t)numSamples;
+    // Publish the audio frame counter for MIDI stamping. Events stamped with
+    // the value observed before this store apply at the next block boundary;
+    // the counter is monotonic, so the queue can never see a regression.
+    frameCount.store(blockFrame, std::memory_order_relaxed);
 
     // Render watchdog: worst-case time and overruns past the block budget.
     const double ticksPerSec =

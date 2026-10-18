@@ -18,6 +18,11 @@ void Deck::load(std::vector<float> interleavedStereo, double sampleRate) {
     next->frames = static_cast<int>(next->stereo.size() / 2);
     next->rate = sampleRate > 0.0 ? sampleRate : 44100.0;
     fileRate.store(next->rate, std::memory_order_relaxed);
+    // Publish length metadata immediately: adoptStaged only runs on the
+    // audio thread during render, which never happens while paused, so the
+    // UI would otherwise show the previous track's length until first Play.
+    infoFrames.store(next->frames, std::memory_order_relaxed);
+    infoRate.store(next->rate, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(stageMutex);
         staged = std::move(next);

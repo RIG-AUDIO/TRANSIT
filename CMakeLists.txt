@@ -273,6 +273,10 @@ add_executable(WaveformTest Tests/WaveformTest.cpp)
 target_include_directories(WaveformTest PRIVATE Source)
 add_test(NAME waveform_test COMMAND WaveformTest)
 
+add_executable(MidiQueueTest Tests/MidiQueueTest.cpp)
+target_include_directories(MidiQueueTest PRIVATE Source)
+add_test(NAME midiqueue_test COMMAND MidiQueueTest)
+
 add_executable(LibraryTest Tests/LibraryTest.cpp Source/Library.cpp)
 target_include_directories(LibraryTest PRIVATE Source)
 target_link_libraries(LibraryTest PRIVATE sqlite3)
@@ -384,8 +388,8 @@ target_compile_definitions(FxProbe PRIVATE
 # sources internally; on those targets -Werror is attached per first-party
 # source file (above) so upstream sources are never gated by it.
 # ---------------------------------------------------------------------------
-foreach(t NullRender DecodeTest MixerTest KeylockTest WaveformTest LibraryTest
-          MidiMapTest RecorderTest AnalyzeTest SyncTest DspBench)
+foreach(t NullRender DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
+          LibraryTest MidiMapTest RecorderTest AnalyzeTest SyncTest DspBench)
   if(MSVC)
     target_compile_options(${t} PRIVATE /WX)
   else()
