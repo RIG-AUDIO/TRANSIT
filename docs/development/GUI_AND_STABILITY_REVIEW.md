@@ -389,19 +389,22 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   `CI_VISUAL_TESTING.md`. Aesthetics are reviewed by a human from the
   artifacts — PNG existence alone never proves design correctness.
 
-### C3 — no sanitizer jobs  (Milestone 1 partial)
-- Add a bounded ASan+UBSan job over the JUCE-free test targets
-  (NullRender/Mixer/Waveform/Library/MidiMap/Recorder/Analyze/Sync) — cheap
-  and stable — and a TSan variant for the queue/mixer/lifecycle tests where
-  it adds signal. Keep the existing 4-config matrix untouched (it is the
-  warning gate); never let a sanitizer job replace a required gate.
+### C3 — no sanitizer jobs  (implemented on this branch)
+- Done: a bounded ASan+UBSan job over the JUCE-free test targets
+  (clang Debug, `-fno-sanitize-recover=all`, LeakSanitizer on, failure logs
+  uploaded) plus a TSan job over the concurrency tests (MidiQueue,
+  LoadSchedule, Library, Mixer). The existing 4-config matrix is untouched
+  (it is the warning gate); no sanitizer job replaced a required gate.
 
 ### C4 — test gaps to close with Milestone 1
-- S3 `MidiQueue` timing/ordering/overflow tests; S5 load-lifecycle +
-  cancellation/newest-wins; S2/S1 FX suspend-ack + retire-deferral protocol
-  tests; S6 concurrent Library access; S4 paused-load length; S11
-  startup/shutdown cycles via GUI smoke. No test may be disabled or
-  weakened to go green (assignment hard rule).
+- S3 `MidiQueue` timing/ordering/overflow tests ✓; S5 load-lifecycle +
+  cancellation/newest-wins ✓ (`loadschedule_test`); S2/S1 FX
+  suspend-ack + retire-deferral protocol tests ✓ (`fxrack_test` — in-process
+  stub plugin, friend seam in `FxRack.h`); S6 concurrent Library access ✓
+  (`library_test`); S4 paused-load length ✓ (`deckload_test`); S11
+  startup/shutdown cycles via GUI smoke — deferred to C2/Milestone 3 (Xvfb
+  harness). No test may be disabled or weakened to go green (assignment
+  hard rule).
 
 ### C5 — gates preserved
 - Guard job (identity strings + SPDX), GCC/Clang × Debug/Release, all

@@ -128,7 +128,10 @@ set(TRANSIT_FIRSTPARTY_SOURCES
   Source/FxRack.cpp
   Tools/ListAudioTypes.cpp
   Tools/UiShot.cpp
-  Tools/FxProbe.cpp)
+  Tools/FxProbe.cpp
+  # JUCE-linked test target: strict flags attach per source file here
+  # (target-wide -Werror would also gate the JUCE module TUs inside it).
+  Tests/FxRackTest.cpp)
 
 set(TRANSIT_WARNING_FLAGS)
 if(MSVC)
@@ -290,6 +293,25 @@ add_executable(FxScanTest Tests/FxScanTest.cpp)
 target_include_directories(FxScanTest PRIVATE Source)
 add_test(NAME fxscan_test COMMAND FxScanTest)
 
+# C4/S1/S2 protocol gates: JUCE-linked (FxRack + stub plugin), so the strict
+# warnings attach per first-party source file, never target-wide (that would
+# gate JUCE's own module TUs compiled inside this target).
+juce_add_console_app(FxRackTest PRODUCT_NAME "FxRackTest")
+target_sources(FxRackTest PRIVATE
+  Tests/FxRackTest.cpp
+  Source/FxRack.cpp)
+target_include_directories(FxRackTest PRIVATE Source)
+target_link_libraries(FxRackTest PRIVATE
+  juce::juce_gui_extra
+  juce::juce_audio_processors
+  juce::juce_recommended_config_flags
+  signalsmith-stretch)
+target_compile_definitions(FxRackTest PRIVATE
+  JUCE_WEB_BROWSER=0
+  JUCE_USE_CURL=0
+  JUCE_PLUGINHOST_VST3=1)
+add_test(NAME fxrack_test COMMAND FxRackTest)
+
 add_executable(LibraryTest Tests/LibraryTest.cpp Source/Library.cpp)
 target_include_directories(LibraryTest PRIVATE Source)
 target_link_libraries(LibraryTest PRIVATE sqlite3)
@@ -411,7 +433,7 @@ foreach(t NullRender DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
   endif()
 endforeach()
 
-foreach(t TRANSIT ListAudioTypes UiShot FxProbe)
+foreach(t TRANSIT ListAudioTypes UiShot FxProbe FxRackTest)
   if(MSVC)
     target_compile_options(${t} PRIVATE /WX)
   endif()

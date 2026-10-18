@@ -67,6 +67,10 @@ public:
     void adoptStaged(); // pickup staged instances at a block boundary
 
 private:
+    // In-process protocol test seam (review C4): stages stub instances and
+    // inspects slot/retire/handshake state without loading VST3 files.
+    friend struct FxRackTestAccess;
+
     struct Slot {
         std::unique_ptr<juce::AudioPluginInstance> active; // audio thread only
         std::unique_ptr<juce::AudioPluginInstance> staged; // guarded below
