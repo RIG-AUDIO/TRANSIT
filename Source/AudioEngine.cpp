@@ -321,6 +321,7 @@ void AudioEngine::takePeaks(float& master, float& chA, float& chB) {
 
 void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device) {
     if (device) {
+        fxRack.setAudioRunning(true); // suspend handshake may begin now
         mixer.setOutputRate(device->getCurrentSampleRate());
         deviceRate = device->getCurrentSampleRate();
         fxRack.setRateDirty(true); // audio skips aux until message prepares

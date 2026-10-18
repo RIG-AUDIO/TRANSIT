@@ -161,6 +161,8 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
     std::fill(left, left + numSamples, 0.0f);
     std::fill(right, right + numSamples, 0.0f);
     stripPeak[0] = stripPeak[1] = 0.0f; // per-block peaks for channel meters
+    if (auxHost)
+        auxHost->blockBoundary(); // once per block, even when all sends are silent
     const bool doPhones = phonesL && phonesR;
     if (doPhones) {
         std::fill(phonesL, phonesL + numSamples, 0.0f);

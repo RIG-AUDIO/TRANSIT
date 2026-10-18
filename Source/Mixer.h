@@ -19,6 +19,10 @@ constexpr int kAuxBuses = 4;
 struct AuxHost {
     virtual ~AuxHost() = default;
     virtual void processAux(int aux, float* left, float* right, int numSamples) = 0;
+    // Called once per render block before any processAux call, unconditionally
+    // (even when every send is silent). Reserved for block-boundary work that
+    // must run every block: plugin pickup and suspend handshakes.
+    virtual void blockBoundary() {}
 };
 
 // RBJ cookbook biquad, transposed direct form II. Coefficients are set from

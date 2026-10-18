@@ -231,7 +231,14 @@ public:
     void showAuxEditor(int aux) { fxRack.showEditor(aux); }
     juce::StringArray scanAuxPlugins() { return fxRack.scanVst3(); }
     void pumpFx() { fxRack.pumpRetired(); }
-    void prepareFx(double rate) { fxRack.prepare(rate, 1024); }
+    void prepareFx(double rate) {
+        // Prepare plugins for the REAL device block size: a 1024 assumption
+        // breaks the hosting contract on devices with larger callbacks.
+        int block = 1024;
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+            block = juce::jmax(16, device->getCurrentBufferSizeSamples());
+        fxRack.prepare(rate, block);
+    }
     bool fxRateDirty() const { return fxRack.isRateDirty(); }
     void setSend(int deck, int aux, float v);
     void setAuxReturn(int aux, float v);
@@ -259,7 +266,7 @@ public:
                                          int numSamples,
                                          const juce::AudioIODeviceCallbackContext& context) override;
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
-    void audioDeviceStopped() override {}
+    void audioDeviceStopped() override { fxRack.setAudioRunning(false); }
 
 private:
     void ensureDb() {
