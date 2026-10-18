@@ -136,7 +136,9 @@ jobs:
           LibraryTest MidiMapTest RecorderTest AnalyzeTest SyncTest
 
       - name: Test under sanitizers
-        run: ctest --test-dir build-asan --output-on-failure
+        # fxrack_test is JUCE-linked and intentionally not built here, so
+        # exclude it; every other registered test is in the build list.
+        run: ctest --test-dir build-asan --output-on-failure -E "fxrack_test"
 
       - name: Upload sanitizer logs
         if: failure()
