@@ -413,7 +413,7 @@ void MainComponent::applyEq(int deck) {
 }
 
 void MainComponent::SearchDebounce::timerCallback() {
-    stop(); // one-shot: fires once typing pauses
+    stopTimer(); // one-shot: fires once typing pauses
     if (owner)
         owner->refreshBrowserList();
 }

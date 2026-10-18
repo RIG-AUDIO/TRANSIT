@@ -39,10 +39,10 @@ juce::String AudioEngine::applySetup(
 }
 
 juce::StringArray AudioEngine::audioDeviceTypes() {
-    juce::StringArray names;
+    juce::StringArray list;
     for (auto* type : deviceManager.getAvailableDeviceTypes())
-        names.add(type->getTypeName());
-    return names;
+        list.add(type->getTypeName());
+    return list;
 }
 
 juce::String AudioEngine::currentAudioDeviceType() {
@@ -59,10 +59,10 @@ void AudioEngine::setAudioDeviceType(const juce::String& type) {
 }
 
 juce::StringArray AudioEngine::outputDeviceNames() {
-    juce::StringArray names;
+    juce::StringArray list;
     if (auto* type = deviceManager.getCurrentDeviceTypeObject())
-        names = type->getDeviceNames(false);
-    return names;
+        list = type->getDeviceNames(false);
+    return list;
 }
 
 juce::String AudioEngine::currentOutputDevice() const {
@@ -150,10 +150,10 @@ AudioEngine::~AudioEngine() {
 }
 
 juce::StringArray AudioEngine::midiInputNames() const {
-    juce::StringArray names;
+    juce::StringArray list;
     for (const auto& d : juce::MidiInput::getAvailableDevices())
-        names.add(d.name);
-    return names;
+        list.add(d.name);
+    return list;
 }
 
 bool AudioEngine::openMidiInput(int index) {
@@ -368,7 +368,7 @@ void AudioEngine::runLoadJob(const LoadJob& job) {
             results[job.deck] = std::move(r);
             resultReady[job.deck] = true;
         }
-        triggerUpdateAsync(); // commit runs on the message thread
+        triggerAsyncUpdate(); // commit runs on the message thread
     };
 
     lean::DecodedAudio decoded;
