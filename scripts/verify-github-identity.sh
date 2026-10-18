@@ -37,14 +37,23 @@ else
   fi
 fi
 
-# 3. git credential helper resolves to the expected username for github.com.
-#    Only the username line is ever surfaced; the password is discarded.
+# 3. Credential helper for github.com must resolve through gh. Only the
+#    username line is ever surfaced; the password is discarded.
 if command -v git >/dev/null 2>&1; then
-  helper="$(git config --get-all credential.helper 2>/dev/null || true)"
-  if [ -n "$helper" ] && [ "$helper" != "auth git-credential" ]; then
-    err "credential.helper is '$helper', expected 'auth git-credential' (gh)."
+  helpers="$(git config --get-all credential.helper 2>/dev/null; git config --get-all 'credential.https://github.com.helper' 2>/dev/null)"
+  gh_ok=0
+  bad_helper=""
+  while IFS= read -r h; do
+    [ -z "$h" ] && continue
+    case "$h" in
+      *"gh auth git-credential"*) gh_ok=1 ;;
+      *) [ -z "$bad_helper" ] && bad_helper="$h" ;;
+    esac
+  done <<< "$helpers"
+  if [ "$gh_ok" -ne 1 ]; then
+    err "no gh credential helper configured for github.com (found: '${bad_helper:-none}')."
   fi
-  if [ -z "${GITHUB_ACTIONS:-}" ] && command -v gh >/dev/null 2>&1; then
+  if [ -z "${GITHUB_ACTIONS:-}" ] && [ "$gh_ok" -eq 1 ]; then
     cred_user="$(printf 'protocol=https\nhost=github.com\n\n' \
       | git credential fill 2>/dev/null \
       | awk -F= '/^username=/{print $2; exit}')"
@@ -56,12 +65,14 @@ if command -v git >/dev/null 2>&1; then
   fi
 fi
 
-# 4. Repository remote, when run inside a worktree.
+# 4. Repository remote, when run inside a worktree. The `.git` suffix and
+#    trailing slashes are tolerated; everything else must match exactly.
 if git rev-parse --git-dir >/dev/null 2>&1; then
   origin="$(git remote get-url origin 2>/dev/null || true)"
+  norm() { printf '%s' "$1" | sed -e 's|/*\.git$||' -e 's|/*$||'; }
   if [ -z "$origin" ]; then
     err "no 'origin' remote configured."
-  elif [ "$origin" != "$EXPECT_REPO" ]; then
+  elif [ "$(norm "$origin")" != "$(norm "$EXPECT_REPO")" ]; then
     err "origin is '$origin', expected '$EXPECT_REPO'."
   else
     echo "IDENTITY GUARD: origin = $origin (ok)"

@@ -66,7 +66,7 @@ int run() {
           (double)(44 + frames * 8));
 
     unsigned char h[44];
-    fread(h, 1, 44, f);
+    check(fread(h, 1, 44, f) == 44, "header bytes read");
     check(h[0] == 'R' && h[1] == 'I' && h[2] == 'F' && h[3] == 'F', "riff tag");
     check(h[20] == 3, "ieee float", h[20], 3.0); // format tag low byte
     check(h[22] == 2, "stereo", h[22], 2.0);
@@ -77,7 +77,7 @@ int run() {
     // First sample pair roundtrips (sine starts at 0, check frame 100).
     fseek(f, 44 + 100 * 8, SEEK_SET);
     float s[2] = {};
-    fread(s, sizeof(float), 2, f);
+    check(fread(s, sizeof(float), 2, f) == 2, "sample bytes read");
     fclose(f);
     check(std::abs(s[0] - L[100]) < 1e-6 && std::abs(s[1] - R[100]) < 1e-6,
           "sample roundtrip", s[0], L[100]);

@@ -21,8 +21,15 @@ chmod +x "$repo"/.githooks/* 2>/dev/null || true
 git -C "$repo" config user.name "RIG-AUDIO"
 git -C "$repo" config user.email "RIG-AUDIO@users.noreply.github.com"
 
-# Credentials: gh-managed, repo-local.
-git -C "$repo" config credential.helper "auth git-credential"
+# Credentials: gh-managed, repo-local scope for github.com only. (gh's own
+# global helper is credential.https://github.com.helper; a bare
+# credential.helper would be interpreted as a `git credential-<name>` call.)
+git -C "$repo" config --local --unset-all credential.helper 2>/dev/null || true
+gh_bin="$(command -v gh || true)"
+if [ -n "$gh_bin" ]; then
+  git -C "$repo" config --local 'credential.https://github.com.helper' \
+    "!$gh_bin auth git-credential"
+fi
 
 # Safety defaults (no force, no auto-tagging surprises).
 git -C "$repo" config push.default simple
