@@ -59,14 +59,25 @@ void checkPyramidShape(const lean::Waveform& w, const char* tag) {
 
     bool globalOk = true;
     if (!w.levels.empty() && !w.levels[0].mins.empty()) {
-        const float gMin = w.levels[0].mins[0];
-        const float gMax = w.levels[0].maxs[0];
+        // Level 0's true global range ...
+        float gMin = w.levels[0].mins[0];
+        float gMax = w.levels[0].maxs[0];
+        for (std::size_t i = 0; i < w.levels[0].mins.size(); ++i) {
+            gMin = std::min(gMin, w.levels[0].mins[i]);
+            gMax = std::max(gMax, w.levels[0].maxs[i]);
+        }
+        // ... must be reproduced exactly by every coarser level (min/max
+        // propagation through the pairwise downsample).
         for (const auto& lv : w.levels) {
+            float lMin = lv.mins.empty() ? gMin : lv.mins[0];
+            float lMax = lv.maxs.empty() ? gMax : lv.maxs[0];
             for (std::size_t i = 0; i < lv.mins.size(); ++i) {
-                if (lv.mins[i] < gMin || lv.maxs[i] > gMax
-                    || lv.maxs[i] < gMin || lv.mins[i] > gMax)
-                    globalOk = false;
+                lMin = std::min(lMin, lv.mins[i]);
+                lMax = std::max(lMax, lv.maxs[i]);
             }
+            if (std::fabs(lMin - gMin) > 1e-9f
+                || std::fabs(lMax - gMax) > 1e-9f)
+                globalOk = false;
         }
     } else {
         globalOk = false;
@@ -99,8 +110,8 @@ int run() {
     constexpr double rate = 48000.0;
     constexpr int frames = (int)rate * 4; // 4 s
 
-    // --- Tone: mono mix-down = 0.75 * sin, sine amplitude bounds,
-    //     duration/rate/frame consistency (payload side). ---
+    // --- Tone: L = s, R = s/2 with s = 0.5*sin -> mix = 0.375 * sin; sine
+    //     amplitude bounds and duration/rate/frame consistency (payload). ---
     {
         std::vector<float> tone((size_t)frames * 2);
         for (int i = 0; i < frames; ++i) {
@@ -120,10 +131,10 @@ int run() {
         checkPyramidShape(w, "tone");
         float mn = 0.0f, mx = 0.0f;
         w.aggregate(0.0, w.durationSeconds, mn, mx);
-        check(mx > 0.745f && mx <= 0.7501f, "tone: sine upper bound",
-              (double)mx, 0.75);
-        check(mn < -0.745f && mn >= -0.7501f, "tone: sine lower bound",
-              (double)mn, -0.75);
+        check(mx > 0.374f && mx <= 0.3751f, "tone: sine upper bound",
+              (double)mx, 0.375);
+        check(mn < -0.374f && mn >= -0.3751f, "tone: sine lower bound",
+              (double)mn, -0.375);
     }
 
     // --- Silence: exact zeros everywhere. ---
