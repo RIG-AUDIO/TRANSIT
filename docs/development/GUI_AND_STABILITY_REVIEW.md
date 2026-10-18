@@ -227,24 +227,45 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 
 ## 2. Waveform findings (Milestone 2)
 
-### W1 — single absolute-peak stream, no signed min/max  (H, functional)
+### W1 — single absolute-peak stream, no signed min/max  (H, functional — implemented in M2)
+- **Implemented:** `lean::Waveform` stores per-level signed `{mins,maxs}`
+  vectors over a mono mix-down (`0.5f * (L + R)`), built by
+  `lean::buildWaveform` on the load worker and committed message-thread-side
+  through the S5 swap; out-of-phase content cancelling to silence is pinned
+  by the mixdown cases in `Tests/WaveformTest.cpp`. (Keeping stereo as two
+  streams was not needed for the display spec — mono mix-down only.)
 - **Where:** `Source/Waveform.h` — `peaks[i] = max(|L|,|R|)` over the window
   (comment `:12`), one value per bucket.
 - **Fix:** new JUCE-free immutable model: per-level `{min,max}` pairs (mono
   mix-down first; optional stereo kept as two streams), built once off the
   audio thread, published via the S5 payload commit.
 
-### W2 — no multiresolution pyramid / LOD  (H)
+### W2 — no multiresolution pyramid / LOD  (H — implemented in M2)
+- **Implemented:** level 0 targets 0.5 ms buckets, clamped to
+  `[1024, 524288]` and never more buckets than frames; each further level
+  ceil-halves down to a single bucket. `Waveform::aggregate(t0,t1,...)`
+  selects the **coarsest** level whose bucket still fits the requested span
+  (1-2 buckets per pixel -> O(viewport) paint) with a level-0 fallback when
+  the capped grid is coarser than the span (very long tracks). The Fix
+  text's "first level whose bucket ≤ pixel span" rule would pick level 0
+  for every overview pixel and make the stripe O(full-track) per frame —
+  the coarsest-fitting rule keeps the same O(viewport) bound the Fix
+  requires. `MainComponent` paint issues one `aggregate` per pixel and does
+  no analysis or allocation.
 - **Where:** `Source/MainComponent.cpp:30-62` — paint maps time → one
   precomputed bucket (`:52-53`): narrow zooms repeat a single coarse peak
   (blocky, aliased); wide zooms point-sample (misses transients between
   buckets).
 - **Fix:** LOD pyramid (level 0 = fine buckets ~4× viewport pixels, halving
   upward); paint aggregates min/max over each pixel's `[t0,t1]` range from
-  the first level whose bucket ≤ pixel span. Zero work in `paint` beyond the
-  O(viewport) aggregation over precomputed data; no analysis, no allocation.
+  the first level whose bucket ≤ pixel span. Zero work in `paint` beyond
+  the O(viewport) aggregation over precomputed data; no analysis, no allocation.
 
-### W3 — click-seek uses the wrong mapping  (H, user-visible)
+### W3 — click-seek uses the wrong mapping  (H, user-visible — implemented in M2)
+- **Implemented:** `paint` records `windowStart`/`windowSpan` for the frame
+  it draws; `mouseDown` maps through `lean::seekTimeFromX` (shared with the
+  tests, clamped at the viewport edges) and falls back to a whole-track
+  seek before the first paint.
 - **Where:** `Source/MainComponent.cpp:64-67` seeks with
   `event.x / getWidth()` (whole-track fraction) while paint shows the window
   `[start, start+span]` (`:42-48`, playhead anchored at 35%).
@@ -255,7 +276,10 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   `[0, len]`. Identical formula in tests as in paint — single source of
   truth, no drift between what's drawn and where a click lands.
 
-### W4 — zoom/wheel mutate state without repainting  (M)
+### W4 — zoom/wheel mutate state without repainting  (M — implemented in M2)
+- **Implemented:** `zoomIn`/`zoomOut` (and therefore the wheel handler and
+  the +/- buttons) call `repaint()` whenever the index actually changes;
+  the legacy 30 Hz timer repaint stays until G10.
 - **Where:** `Source/MainComponent.cpp:12-28` (`zoomIn`, `zoomOut`,
   `mouseWheelMove`).
 - Today's only repaint is the 30 Hz whole-window timer
@@ -263,32 +287,67 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 - **Fix:** explicit `repaint()` on zoom changes (and targeted repaint once
   G10 reduces global repaints).
 
-### W5 — no overview stripe  (M, spec-required)
+### W5 — no overview stripe  (M, spec-required — implemented in M2)
+- **Implemented:** a 14 px overview stripe at the bottom of each waveform
+  view (views >= 48 px tall) rendered from the pyramid, with a distinct
+  whole-track click-seek (routed separately from the zoomed window seek),
+  an accent playhead marker, and "Loading..." / "Analyzing..." text from
+  `engine.deckState()` while no waveform payload is committed.
 - Whole-track context bar with its own click-to-seek (distinct from zoomed
   seek), playhead marker, and load-progress indication (S5 states) rendered
   from the coarsest pyramid level — added with the W1/W2 model.
 
-### W6 — build cost and integer safety of peak generation  (M)
+### W6 — build cost and integer safety of peak generation  (M — implemented in M2)
+- **Implemented:** `int64`/`size_t` math end-to-end in
+  `lean::buildWaveform`; explicit rejection above 24 h at the declared rate
+  (corrupted headers) **before** any sample is read; bounded level-0 bucket
+  count; non-finite samples excluded from the payload (never propagated,
+  per-bucket fixup to silence); `AudioEngine` no longer derives a target
+  bucket count.
+- **Validation (implemented):** full synthetic suite in
+  `Tests/WaveformTest.cpp` — impulse in/out of its bucket, full-scale and
+  out-of-phase mix-down, stereo cancellation, sine amplitude bounds,
+  10-frame/1-frame/zero-length inputs, >24 h frame-count rejection, odd
+  (999-bucket) pyramid boundary with pairwise-downsample exactness and
+  global-range propagation, LOD level selection, W3 viewport-edge seeks,
+  aggregate zero-width/out-of-range/reversed windows, non-finite
+  exclusion, payload duration/rate/frame consistency, and the W8 zoom
+  table.
+- **Residual:** frame counts above `INT_MAX` are now handled correctly via
+  `int64` but not exercised against a real (multi-GB) allocation in CI;
+  the decode path itself is `int`-bounded today (`Source/AudioEngine.cpp`
+  `runLoadJob`).
 - **Where:** `Source/Waveform.h:25` casts `numFrames / rate / n` and frame
   counts to `int`; `Source/AudioEngine.cpp:287` derives the target bucket
   count (256..8192). O(track) single pass — fine off-thread (S5), but
   frame counts > `INT_MAX` (≈12.4 h at 48 kHz, or corrupted headers) wrap.
 - **Fix:** saturating/guarded types (`int64`/`size_t` end-to-end), reject
   absurd durations explicitly, and test with synthetic huge frame counts.
-- **Validation:** spec's synthetic suite in `Tests/WaveformTest.cpp`
-  (currently tone/silence/empty only, `Tests/WaveformTest.cpp:22-58`):
+- **Validation (planned at review time):** spec's synthetic suite in
+  `Tests/WaveformTest.cpp` (baseline at review: tone/silence/empty only;
+  now implemented — see **Validation (implemented)** above):
   impulse, ±full-scale peaks, stereo channel difference, sine amplitude
   bounds, short and zero-length inputs, huge frame counts, pyramid
   downsample boundaries, LOD level selection, viewport edge seeks (W3
   formula at x=0 and x=width), non-finite input rejection, and
   duration/rate consistency between payload and deck.
 
-### W7 — playhead source  (verified; keep)
+### W7 — playhead source  (verified; keep — unchanged in M2)
 - Paint reads the engine's authoritative position
   (`Source/MainComponent.cpp:43`); after S5 the payload swap must never
   tear the playhead read (message-thread-owned state — no change needed).
+- **Post-implementation note:** the waveform payload still commits only in
+  `AudioEngine::handleAsyncUpdate()` on the message thread, so the playhead
+  read in paint remains single-threaded as required. Deck-side
+  length/duration consistency is covered by `deckload_test`.
 
-### W8 — no zoom-state persistence or tests for the zoom table  (L)
+### W8 — no zoom-state persistence or tests for the zoom table  (L — tests implemented in M2)
+- **Implemented:** the table and its helpers moved to the JUCE-free layer
+  (`lean::kZoomSeconds`, `lean::clampZoomIndex`, `lean::zoomSpanSeconds`,
+  shared by the view and the tests); `Tests/WaveformTest.cpp` pins
+  both-end index clamping, "whole" -> full duration, span >= length ->
+  length, and invalid length -> 0. Cross-session zoom persistence was not
+  part of the fix text (tests only) and remains out of scope.
 - Zoom table `{4,8,16,32,64,128,256,whole}` already matches the assignment
   (`Source/MainComponent.h:39-41`, default 32 s); add tests that the index
   clamps at both ends and that "whole" (`0.0`) maps to full duration.
