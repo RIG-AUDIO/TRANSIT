@@ -128,6 +128,7 @@ set(TRANSIT_FIRSTPARTY_SOURCES
   Source/FxRack.cpp
   Tools/ListAudioTypes.cpp
   Tools/UiShot.cpp
+  Tools/GuiSmoke.cpp
   Tools/FxProbe.cpp
   # JUCE-linked test target: strict flags attach per source file here
   # (target-wide -Werror would also gate the JUCE module TUs inside it).
@@ -396,6 +397,46 @@ target_compile_definitions(UiShot PRIVATE
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0)
 
+# CI gate (review C2): deterministic GUI screenshot/smoke harness run under
+# Xvfb by the gui-smoke job; see docs/development/CI_VISUAL_TESTING.md.
+juce_add_console_app(GuiSmoke)
+target_sources(GuiSmoke PRIVATE
+  Tools/GuiSmoke.cpp
+  Source/MainComponent.cpp
+  Source/SettingsDialog.cpp
+  Source/TopBar.cpp
+  Source/AudioEngine.cpp
+  Source/Deck.cpp
+  Source/Decode.cpp
+  Source/Mixer.cpp
+  Source/Library.cpp
+  Source/Recorder.cpp
+  Source/DJLook.cpp
+  Source/FxRack.cpp)
+target_include_directories(GuiSmoke PRIVATE Source)
+target_include_directories(GuiSmoke SYSTEM PRIVATE ${miniaudio_SOURCE_DIR})
+target_link_libraries(GuiSmoke PRIVATE
+  juce::juce_gui_extra
+  juce::juce_audio_utils
+  juce::juce_audio_formats
+  juce::juce_audio_processors
+  juce::juce_dsp
+  juce::juce_recommended_config_flags
+  juce::juce_recommended_lto_flags
+  juce::juce_recommended_warning_flags
+  signalsmith-stretch
+  sqlite3
+  TRANSITAssets)
+if(WIN32)
+  target_link_libraries(GuiSmoke PRIVATE mfplat mfreadwrite mfuuid)
+  target_compile_definitions(GuiSmoke PRIVATE JUCE_ASIO=1)
+endif()
+target_compile_definitions(GuiSmoke PRIVATE
+  JUCE_MODAL_LOOPS_PERMITTED=1
+  JUCE_PLUGINHOST_VST3=1
+  JUCE_WEB_BROWSER=0
+  JUCE_USE_CURL=0)
+
 # Dev probe: end-to-end VST3 load/process/unload on this machine.
 juce_add_console_app(FxProbe)
 target_sources(FxProbe PRIVATE
@@ -433,7 +474,7 @@ foreach(t NullRender DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
   endif()
 endforeach()
 
-foreach(t TRANSIT ListAudioTypes UiShot FxProbe FxRackTest)
+foreach(t TRANSIT ListAudioTypes UiShot GuiSmoke FxProbe FxRackTest)
   if(MSVC)
     target_compile_options(${t} PRIVATE /WX)
   endif()

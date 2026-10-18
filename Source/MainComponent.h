@@ -23,6 +23,19 @@ public:
     void resized() override;
     void dumpLayout() const;
 
+    // CI smoke-test seams (docs/development/CI_VISUAL_TESTING.md): thin
+    // wrappers so Tools/GuiSmoke.cpp can drive deterministic UI states
+    // without reaching into private members. No behavior lives here.
+    void harnessLoadFile(int deck, const juce::String& path) {
+        engine.loadFile(deck, path);
+    }
+    void harnessPlay(int deck, bool p) { engine.play(deck, p); }
+    int harnessDeckState(int deck) const { return engine.deckState(deck); }
+    void harnessSetZoom(int deck, int idx) {
+        strips[deck & 1].wave->setZoomIndex(idx);
+    }
+    void harnessShowFxPage(bool show) { showBrowser(!show); }
+
 private:
     class WaveformView : public juce::Component {
     public:
@@ -33,6 +46,13 @@ private:
                             const juce::MouseWheelDetails& wheel) override;
         void zoomIn();
         void zoomOut();
+        void setZoomIndex(int idx) {
+            const int c = lean::clampZoomIndex(idx);
+            if (c != zoomIdx) {
+                zoomIdx = c;
+                repaint();
+            }
+        }
 
     private:
         void paintOverview(juce::Graphics& g, int W, int mainH, int stripeH,
