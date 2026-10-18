@@ -1,12 +1,15 @@
 // TRANSIT — DJ Software / SPDX-License-Identifier: GPL-3.0-only
 
 // Library index gates: scan finds audio files (not other files), search is
-// case-insensitive substring, rescan is idempotent, new files appear.
+// case-insensitive substring, rescan is idempotent, new files appear, and
+// concurrent scan/search threads serialize without races or deadlock.
 #include "Library.h"
 
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 namespace {
 
@@ -63,6 +66,45 @@ int run() {
 
     // Missing folder errors cleanly.
     check(lib.scanFolder((dir / "nope").string()) == -1, "missing folder -1");
+
+    // Concurrency (review S6/S11): message-thread-style searches racing a
+    // background scan, as in production (worker scans, timer searches). The
+    // internal mutex must serialize them; a data race would fail under the
+    // sanitizer job, a deadlock would hit the CI timeout.
+    {
+        std::atomic<bool> stop{ false };
+        std::atomic<int> served{ 0 }; // completed calls from reader threads
+        std::atomic<int> hits{ 0 };   // reader searches with results
+        std::thread reader([&] {
+            do {
+                const auto r = lib.search("a");
+                if (!r.empty())
+                    hits.fetch_add(1, std::memory_order_relaxed);
+                served.fetch_add(1, std::memory_order_relaxed);
+            } while (!stop.load(std::memory_order_acquire));
+        });
+        std::thread reader2([&] {
+            do {
+                const int c = lib.count();
+                if (c < 0)
+                    hits.store(-1, std::memory_order_relaxed);
+                served.fetch_add(1, std::memory_order_relaxed);
+            } while (!stop.load(std::memory_order_acquire));
+        });
+        int badScans = 0;
+        for (int i = 0; i < 20; ++i)
+            if (lib.scanFolder(dir.string()) != 4)
+                ++badScans;
+        stop.store(true, std::memory_order_release);
+        reader.join();
+        reader2.join();
+        check(badScans == 0, "concurrent scans all indexed 4");
+        check(served.load(std::memory_order_relaxed) >= 2,
+              "concurrent readers served");
+        check(hits.load(std::memory_order_relaxed) > 0,
+              "concurrent search returned rows");
+        check(lib.count() == 4, "count stable after concurrent scans");
+    }
 
     fs::remove_all(dir, ec);
     if (failures == 0)

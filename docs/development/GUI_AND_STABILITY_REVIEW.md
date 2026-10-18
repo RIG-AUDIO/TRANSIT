@@ -107,27 +107,36 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 - **Defect:** multi-second UI freezes; worse, the moment loading moves to a
   background thread (required) the plain members become cross-thread races
   and the const-ref waveform read becomes a use-after-free window.
-- **Fix (ownership model):**
-  - worker thread owned by `AudioEngine` (created in ctor, joined in dtor
-    before members are torn down); jobs carry `{generation, deck, path}` with
-    an atomic per-deck cancel generation — **newest wins**, each pipeline
-    stage checks its generation and abandons;
-  - the worker **never touches engine state**: it produces a result struct
-    (decoded buffer for `Deck::load` staging, peak payload, BPM, duration,
-    error, state);
-  - the message thread commits results (30 Hz timer already polls, or an
-    `AsyncUpdater`): publishes `Empty/Loading/Analyzing/Ready/Error` state,
-    swaps the immutable waveform payload, sets `bpm` (becomes
-    `std::atomic<double>`), flips `fileLoaded`; audio-side buffer transfer
-    reuses the existing staged-`shared_ptr` pattern in `Deck::load`
-    (`Source/Deck.cpp:15-30`) — unchanged;
-  - paint keeps reading a message-thread-owned immutable
-    `shared_ptr<const Waveform>` member — no lock, no allocation, no stale
-    partial publication (a payload is either fully committed or absent).
-- **Validation:** new `LoadLifecycleTest` (fake decode stage, generation
-  cancellation, newest-wins ordering, no commit of superseded results, error
-  states); CI GUI smoke shows Loading→Ready without freezing (visual);
-  sanitizers.
+- **Fix (ownership model, implemented on `feat/gui-waveform-stability`):**
+  - worker thread owned by `AudioEngine` (started at the end of the ctor,
+    joined in the dtor right after `cancelPendingUpdate()` and before the
+    device callback is removed); jobs carry `{kind, deck, generation,
+    path}` with `lean::LoadGate` — **newest wins**, each pipeline stage
+    checks `isCurrent()` and abandons superseded work;
+  - the worker **never touches engine state**: it fills a `LoadResult`
+    (decoded buffer, peak payload, BPM, filename, error) under
+    `resultMutex`, then wakes the message thread via
+    `juce::AsyncUpdater::triggerAsyncUpdate()`;
+  - `handleAsyncUpdate()` commits on the message thread: publishes
+    `Empty/Loading/Analyzing/Ready/Error` (the only cross-thread-readable
+    field, `std::atomic<int> states[2]`, polled by the 30 Hz timer and the
+    status line), moves the immutable waveform payload into `waves[d]`,
+    sets `bpm[d]`, flips `fileLoaded[d]`, stages the audio buffer through
+    the unchanged staged-`shared_ptr` pattern in `Deck::load`, then fires
+    `onDeckReady` (auto-play + header refresh);
+  - `waves`, `bpm`, `fileLoaded`, `names`, `errors` stay **plain** types on
+    purpose (deliberate refinement of the earlier `std::atomic<double>`
+    suggestion): every write happens inside the message-thread commit and
+    every reader (paint, timer) runs on that same thread, so each field is
+    observed as a whole old-or-new value — the const-ref `getWaveform` is
+    safe by message-thread ownership rather than by a `shared_ptr` copy.
+- **Validation (implemented):** `Tests/LoadScheduleTest.cpp`
+  (`loadschedule_test`) covers generation supersession, per-deck gate
+  independence and concurrent submit/accept monotonicity; the ASan+UBSan
+  CI job runs it plus `library_test` (now with concurrent scan+search
+  threads) under sanitizers; Loading/Analyzing/Ready/Error transitions are
+  driven into the deck status line by the 30 Hz timer; shutdown join is
+  covered by dtor ordering (S11).
 
 ### S6 — library scan/search synchronous, unserialized, undebounced  (M)
 - **Where:** `Library::scanFolder`/`search` (`Source/Library.cpp:100-169`)
