@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# TRANSIT — DJ Software / SPDX-License-Identifier: GPL-3.0-only
+# TRANSIT — pre-push guard: identity + forbidden-string scan.
+#
+# Blocks a push when (a) the GitHub identity/remote guard fails, or
+# (b) commits about to be pushed introduce forbidden legacy strings outside
+# the documented carve-out files (Source/Assets/OFL.txt, *.ttf).
+# Never prints credentials.
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+scripts="$repo/scripts"
+zero="0000000000000000000000000000000000000000"
+pattern='circuit6|circuit 6|openfaders|montronedsp'
+# Documented carve-outs: legally required font attribution, and the guard
+# definitions themselves (which must contain the patterns to enforce them).
+excludes=(
+  ':(exclude)Source/Assets/OFL.txt'
+  ':(exclude)docs/THIRD_PARTY_NOTICES.md'
+  ':(exclude)*.ttf'
+  ':(exclude).githooks/'
+  ':(exclude)scripts/'
+  ':(exclude).github/workflows/'
+)
+
+# 1. Identity guard.
+if ! bash "$scripts/verify-github-identity.sh"; then
+  echo "pre-push: identity guard failed; push blocked." >&2
+  exit 1
+fi
+
+# 2. stdin (pre-push hook): <local ref> SP <local sha> SP <remote ref> SP <remote sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue  # branch deletion, nothing to scan
+
+  if [ "$remote_sha" = "$zero" ] || ! git -C "$repo" cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    # New branch (or empty remote): diff the whole tree against the empty
+    # tree, so every tracked line is scanned as an addition.
+    base="$(git -C "$repo" hash-object -t tree /dev/null)"
+    range_desc="new branch $local_ref (whole tree)"
+  else
+    base="$remote_sha"
+    range_desc="$remote_sha..$local_sha"
+  fi
+  scan() { git -C "$repo" diff -U0 "$base" "$local_sha" -- "$@"; }
+  paths() { git -C "$repo" diff --name-only "$base" "$local_sha" -- "$@"; }
+
+  echo "pre-push: scanning $range_desc"
+
+  # (a) Forbidden strings in changed file paths.
+  if paths . "${excludes[@]}" | grep -iE "$pattern"; then
+    echo "pre-push: forbidden legacy string in a file path (see above)." >&2
+    exit 1
+  fi
+
+  # (b) Forbidden strings in added/removed content (file-header lines of the
+  #     diff are excluded from matching; paths are covered by check (a)).
+  matches="$(scan . "${excludes[@]}" \
+    | grep -Ei "$pattern" \
+    | grep -vE '^[+-]{3} ' || true)"
+  if [ -n "$matches" ]; then
+    echo "$matches" >&2
+    echo "pre-push: forbidden legacy string introduced (see above)." >&2
+    echo "pre-push: carve-outs: font attribution (OFL), THIRD_PARTY_NOTICES, and guard-definition files." >&2
+    exit 1
+  fi
+done
+
+exit 0

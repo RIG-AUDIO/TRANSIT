@@ -1,0 +1,931 @@
+// TRANSIT — DJ Software / SPDX-License-Identifier: GPL-3.0-only
+
+#include "MainComponent.h"
+
+#include <cstdio>
+
+#include "SettingsDialog.h"
+
+MainComponent::WaveformView::WaveformView(AudioEngine& e, int d)
+    : engine(e), deck(d) {}
+
+void MainComponent::WaveformView::zoomIn() {
+    if (zoomIdx > 0)
+        --zoomIdx;
+}
+
+void MainComponent::WaveformView::zoomOut() {
+    if (zoomIdx < 7)
+        ++zoomIdx;
+}
+
+void MainComponent::WaveformView::mouseWheelMove(const juce::MouseEvent&,
+                                                 const juce::MouseWheelDetails& wheel) {
+    if (wheel.deltaY > 0.0f)
+        zoomIn();
+    else if (wheel.deltaY < 0.0f)
+        zoomOut();
+}
+
+void MainComponent::WaveformView::paint(juce::Graphics& g) {
+    g.fillAll(juce::Colour(0xff0a0d10));
+    const auto& wave = engine.getWaveform(deck);
+    const int W = getWidth();
+    const int H = getHeight();
+    const double len = engine.getLengthSeconds(deck);
+    if (wave.peaks.empty() || len <= 0.0 || W <= 0) {
+        g.setColour(DJLook::dimInk);
+        g.drawText("Drop a track - double-click the library",
+                   getLocalBounds().reduced(8), juce::Justification::centred);
+        return;
+    }
+    // Scrolling window centered on the playhead (clamped to the track).
+    const double pos = engine.getPositionSeconds(deck);
+    double span = zooms[zoomIdx];
+    if (span <= 0.0 || span >= len)
+        span = len;
+    double start = pos - span * 0.35; // playhead ~1/3 in, Traktor-style
+    start = juce::jlimit(0.0, std::max(0.0, len - span), start);
+    const int n = (int)wave.peaks.size();
+    for (int x = 0; x < W; ++x) {
+        const double t = start + span * (double)x / W;
+        const int pi = juce::jlimit(0, n - 1, (int)(t / len * n));
+        const float peak = wave.peaks[(size_t)pi];
+        const int h = juce::jmin(H - 4, (int)(peak * (float)H));
+        const bool played = t < pos;
+        g.setColour(played ? DJLook::cyan.withAlpha(0.35f) : DJLook::cyan);
+        g.fillRect(x, (H - h) / 2, 1, h);
+    }
+    const double posX = (pos - start) / span * W;
+    g.setColour(DJLook::accent);
+    g.fillRect(juce::jlimit(0, W - 2, (int)posX), 0, 2, H);
+}
+
+void MainComponent::WaveformView::mouseDown(const juce::MouseEvent& event) {
+    if (getWidth() > 0)
+        engine.seekFraction(deck, (double)event.x / getWidth());
+}
+
+void MainComponent::CueHold::mouseDown(const juce::MouseEvent&) {
+    if (owner)
+        owner->engine.startCuePreview(deck);
+}
+
+void MainComponent::CueHold::mouseUp(const juce::MouseEvent&) {
+    if (owner)
+        owner->engine.stopCuePreview(deck);
+}
+
+void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w,
+                                              int h, bool selected) {
+    // Model holds full paths; display filenames only. Selected rows get the
+    // same blue glow pill as the MIX tab.
+    if (selected) {
+        auto area = juce::Rectangle<float>((float)w - 8.0f, (float)h - 4.0f)
+                        .withPosition(4.0f, 2.0f);
+        juce::ColourGradient glow(DJLook::tabBlue, 0.0f, 0.0f,
+                                  DJLook::tabBlue.darker(0.4f), (float)w, 0.0f,
+                                  false);
+        g.setGradientFill(glow);
+        g.fillRoundedRectangle(area, 4.0f);
+        g.setColour(juce::Colours::white);
+    } else {
+        g.setColour(DJLook::ink);
+    }
+    if (row >= 0 && row < files.size())
+        g.drawText(juce::File(files[row]).getFileName(), 12, 0, w - 20, h,
+                   juce::Justification::centredLeft, true);
+}
+
+void MainComponent::FileList::listBoxItemDoubleClicked(int row, const juce::MouseEvent&) {
+    if (onDoubleClick)
+        onDoubleClick(row);
+}
+
+MainComponent::MainComponent() : fileList("browser", &fileModel) {
+    setLookAndFeel(&look);
+    const char* names[2] = { "A", "B" };
+    const char* knobNames[4] = { "GAIN", "LOW", "MID", "HIGH" };
+    for (int d = 0; d < 2; ++d) {
+        auto& s = strips[d];
+        addAndMakeVisible(s.header);
+        addAndMakeVisible(s.zoomInBtn);
+        addAndMakeVisible(s.zoomOutBtn);
+        addAndMakeVisible(s.sync);
+        s.sync.setVisible(false); // Free mode default: no sync buttons
+        s.header.setText("DECK " + juce::String(names[d]), juce::dontSendNotification);
+        s.header.setFont(juce::Font(juce::FontOptions{}.withHeight(17.0f)).boldened());
+        s.header.setColour(juce::Label::textColourId, DJLook::accent);
+        addAndMakeVisible(s.open);
+        addAndMakeVisible(s.play);
+        addAndMakeVisible(s.cue);
+        addAndMakeVisible(s.pfl);
+        addAndMakeVisible(s.key);
+        addAndMakeVisible(s.back);
+        addAndMakeVisible(s.fwd);
+        addAndMakeVisible(s.tempo);
+        addAndMakeVisible(s.gain);
+        addAndMakeVisible(s.low);
+        addAndMakeVisible(s.mid);
+        addAndMakeVisible(s.high);
+        addAndMakeVisible(s.fader);
+        addAndMakeVisible(s.status);
+        addAndMakeVisible(s.time);
+        for (int k = 0; k < 4; ++k) {
+            addAndMakeVisible(s.knobCaps[k]);
+            s.knobCaps[k].setText(knobNames[k], juce::dontSendNotification);
+            s.knobCaps[k].setJustificationType(juce::Justification::centred);
+            s.knobCaps[k].setColour(juce::Label::textColourId, DJLook::dimInk);
+            s.knobCaps[k].setFont(
+                juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
+            // Deck B captions stay hidden: the mixer matrix reuses deck A's
+            // labels as its row headers.
+            s.knobCaps[k].setVisible(d == 0);
+        }
+        s.wave = std::make_unique<WaveformView>(engine, d);
+        addAndMakeVisible(s.wave.get());
+        s.zoomInBtn.onClick = [this, d] {
+            if (strips[d].wave)
+                strips[d].wave->zoomIn();
+        };
+        s.zoomOutBtn.onClick = [this, d] {
+            if (strips[d].wave)
+                strips[d].wave->zoomOut();
+        };
+
+        s.open.setButtonText("Open " + juce::String(names[d]));
+        s.open.onClick = [this, d] { openFile(d); };
+        s.play.setClickingTogglesState(true);
+        s.play.onClick = [this, d] {
+            engine.play(d, strips[d].play.getToggleState());
+        };
+        s.sync.setClickingTogglesState(true);
+        s.sync.onClick = [this, d] {
+            const bool want = strips[d].sync.getToggleState();
+            if (want && !engine.setSync(d, true)) {
+                strips[d].sync.setToggleState(false, juce::dontSendNotification);
+                sysStatus.setText("SYNC needs analyzed BPM on both decks",
+                                  juce::dontSendNotification);
+            } else if (!want) {
+                engine.setSync(d, false);
+            }
+        };
+        s.key.setClickingTogglesState(true);
+        s.key.onClick = [this, d] { engine.setKeylock(d, strips[d].key.getToggleState()); };
+        s.pfl.setClickingTogglesState(true);
+        s.pfl.onClick = [this, d] { engine.setPfl(d, strips[d].pfl.getToggleState()); };
+        cueHolds[d].owner = this;
+        cueHolds[d].deck = d;
+        s.cue.addMouseListener(&cueHolds[d], false);
+        s.back.onClick = [this, d] { engine.jumpBeats(d, -4.0); };
+        s.fwd.onClick = [this, d] { engine.jumpBeats(d, 4.0); };
+
+        s.tempo.setRange(0.5, 1.5, 0.001);
+        s.tempo.setValue(1.0);
+        s.tempo.onValueChange = [this, d] { engine.setTempo(d, strips[d].tempo.getValue()); };
+
+        s.gain.setRange(0.0, 1.25, 0.001);
+        s.gain.setValue(1.0);
+        s.gain.onValueChange = [this, d] {
+            engine.setGain(d, (float)strips[d].gain.getValue());
+        };
+
+        s.gain.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        for (auto* eq : { &s.low, &s.mid, &s.high }) {
+            eq->setRange(-24.0, 6.0, 0.1);
+            eq->setValue(0.0);
+            eq->setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+            eq->getProperties().set("bipolar", 1);
+            eq->setDoubleClickReturnValue(true, 0.0);
+            eq->onValueChange = [this, d] { applyEq(d); };
+        }
+
+        s.fader.setRange(0.0, 1.0, 0.001);
+        s.fader.setValue(1.0);
+        s.fader.onValueChange = [this, d] {
+            engine.setFader(d, (float)strips[d].fader.getValue());
+        };
+        auto arm = [this, d](juce::Slider& sl, lean::MidiTarget t) {
+            sl.onDragStart = [this, d, t] {
+                if (learnButton.getToggleState()) {
+                    pending = PendingLearn{ d, t };
+                    sysStatus.setText("Move a MIDI control to bind...",
+                                      juce::dontSendNotification);
+                }
+            };
+        };
+        arm(s.tempo, lean::MidiTarget::Tempo);
+        arm(s.gain, lean::MidiTarget::Gain);
+        arm(s.fader, lean::MidiTarget::Fader);
+        arm(s.low, lean::MidiTarget::Low);
+        arm(s.mid, lean::MidiTarget::Mid);
+        arm(s.high, lean::MidiTarget::High);
+
+        s.status.setText("Deck " + juce::String(names[d]) + ": empty",
+                         juce::dontSendNotification);
+        s.time.setText("--:-- / --:--", juce::dontSendNotification);
+    }
+
+    addAndMakeVisible(xfade);
+    addAndMakeVisible(cueBlend);
+    xfade.setRange(0.0, 1.0, 0.001);
+    xfade.setValue(0.5);
+    xfade.onValueChange = [this] { engine.setCrossfader((float)xfade.getValue()); };
+    cueBlend.setRange(0.0, 1.0, 0.001);
+    cueBlend.setValue(1.0);
+    cueBlend.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    cueBlend.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    cueBlend.onValueChange = [this] {
+        engine.setCueBlend((float)cueBlend.getValue());
+    };
+    topBar.masterKnob.onValueChange = [this] {
+        engine.setMaster((float)topBar.masterKnob.getValue());
+    };
+    topBar.phonesKnob.onValueChange = [this] {
+        engine.setPhonesLevel((float)topBar.phonesKnob.getValue());
+    };
+    const char* mixNames[3] = { "XFADE", "MASTER", "BLEND" };
+    juce::Slider* mixSliders[3] = { &xfade, &cueBlend, &cueBlend };
+    for (int i = 0; i < 3; ++i) {
+        if (i == 1)
+            continue; // MASTER lives in the top bar now
+        addAndMakeVisible(mixerCaps[i]);
+        mixerCaps[i].setText(mixNames[i], juce::dontSendNotification);
+        mixerCaps[i].setJustificationType(juce::Justification::centred);
+        mixerCaps[i].setColour(juce::Label::textColourId, DJLook::dimInk);
+        mixerCaps[i].setFont(
+            juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
+        addAndMakeVisible(*mixSliders[i]);
+    }
+    auto armGlobal = [this](juce::Slider& sl, lean::MidiTarget t) {
+        sl.onDragStart = [this, t] {
+            if (learnButton.getToggleState()) {
+                pending = PendingLearn{ 0, t };
+                sysStatus.setText("Move a MIDI control to bind...",
+                                  juce::dontSendNotification);
+            }
+        };
+    };
+    armGlobal(xfade, lean::MidiTarget::Xfade);
+    armGlobal(topBar.masterKnob, lean::MidiTarget::Master);
+    armGlobal(topBar.phonesKnob, lean::MidiTarget::Phones);
+    armGlobal(cueBlend, lean::MidiTarget::Blend);
+
+    addAndMakeVisible(folderButton);
+    addAndMakeVisible(toA);
+    addAndMakeVisible(toB);
+    addAndMakeVisible(folderLabel);
+    addAndMakeVisible(libraryHeader);
+    libraryHeader.setText("LIBRARY", juce::dontSendNotification);
+    libraryHeader.setFont(juce::Font(juce::FontOptions{}.withHeight(15.0f)).boldened());
+    libraryHeader.setColour(juce::Label::textColourId, DJLook::accent);
+    addAndMakeVisible(browserGlass);
+    browserGlass.toBack();
+    addAndMakeVisible(searchBox);
+    addAndMakeVisible(fileList);
+    folderButton.onClick = [this] { openFolder(); };
+    toA.setRadioGroupId(100);
+    toB.setRadioGroupId(100);
+    toA.setClickingTogglesState(true);
+    toB.setClickingTogglesState(true);
+    toA.setToggleState(true, juce::dontSendNotification);
+    folderLabel.setText("No folder", juce::dontSendNotification);
+    searchBox.setTextToShowWhenEmpty("Search indexed library...",
+                                     juce::Colours::grey);
+    searchBox.onTextChange = [this] { refreshBrowserList(); };
+    fileModel.onDoubleClick = [this](int row) { loadBrowserRow(row); };
+
+    addAndMakeVisible(midiCombo);
+    addAndMakeVisible(learnButton);
+    addAndMakeVisible(sysStatus);
+    addAndMakeVisible(topBar);
+    midiCombo.addItem("(no MIDI)", 1);
+    for (const auto& name : engine.midiInputNames())
+        midiCombo.addItem(name, midiCombo.getNumItems() + 1);
+    midiCombo.setSelectedId(1, juce::dontSendNotification);
+    midiCombo.onChange = [this] {
+        engine.openMidiInput(midiCombo.getSelectedId() - 2);
+    };
+    learnButton.setClickingTogglesState(true);
+    learnButton.onClick = [this] {
+        if (!learnButton.getToggleState())
+            pending.reset();
+        else
+            sysStatus.setText("Touch a control, then move a MIDI CC...",
+                              juce::dontSendNotification);
+    };
+    topBar.setupBtn.onClick = [this] { openSettings(); };
+    topBar.recTab.onClick = [this] {
+        juce::String status;
+        engine.toggleRecord(status);
+        sysStatus.setText(status, juce::dontSendNotification);
+    };
+    topBar.mixTab.onClick = [this] { showBrowser(true); };
+    topBar.fxTab.onClick = [this] { showBrowser(false); };
+    topBar.fxTab.setEnabled(true);
+    topBar.fxTab.setTooltip("");
+
+    addAndMakeVisible(fxPage);
+    const char* auxNames[4] = { "AUX 1", "AUX 2", "AUX 3", "AUX 4" };
+    for (int a = 0; a < 4; ++a) {
+        auto& s = auxStrips[a];
+        fxPage.addAndMakeVisible(s.header);
+        s.header.setText(auxNames[a], juce::dontSendNotification);
+        s.header.setJustificationType(juce::Justification::centred);
+        s.header.setFont(
+            juce::Font(juce::FontOptions{}.withHeight(14.0f)).boldened());
+        s.header.setColour(juce::Label::textColourId, DJLook::accent);
+        fxPage.addAndMakeVisible(s.slot);
+        fxPage.addAndMakeVisible(s.bypass);
+        fxPage.addAndMakeVisible(s.edit);
+        fxPage.addAndMakeVisible(s.sendA);
+        fxPage.addAndMakeVisible(s.sendB);
+        fxPage.addAndMakeVisible(s.ret);
+        for (auto* cap : { &s.capA, &s.capB, &s.capR }) {
+            fxPage.addAndMakeVisible(cap);
+            cap->setJustificationType(juce::Justification::centred);
+            cap->setColour(juce::Label::textColourId, DJLook::dimInk);
+            cap->setFont(
+                juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
+        }
+        s.slot.onClick = [this, a] { pickAuxPlugin(a); };
+        s.edit.setEnabled(false);        s.bypass.setClickingTogglesState(true);
+        s.bypass.onClick = [this, a] {
+            engine.setAuxBypass(a, auxStrips[a].bypass.getToggleState());
+        };
+        s.edit.onClick = [this, a] { engine.showAuxEditor(a); };
+        s.sendA.setRange(0.0, 1.0, 0.001);
+        s.sendA.onValueChange = [this, a] {
+            engine.setSend(0, a, (float)auxStrips[a].sendA.getValue());
+        };
+        s.sendB.setRange(0.0, 1.0, 0.001);
+        s.sendB.onValueChange = [this, a] {
+            engine.setSend(1, a, (float)auxStrips[a].sendB.getValue());
+        };
+        s.ret.setRange(0.0, 1.25, 0.001);
+        s.ret.setValue(1.0);
+        s.ret.onValueChange = [this, a] {
+            engine.setAuxReturn(a, (float)auxStrips[a].ret.getValue());
+        };
+    }
+    fxPage.setVisible(false);
+    sysStatus.setText("MIDI: none", juce::dontSendNotification);
+    addAndMakeVisible(mixerHeader);
+    mixerHeader.setText("MIXER", juce::dontSendNotification);
+    mixerHeader.setJustificationType(juce::Justification::centred);
+    mixerHeader.setFont(juce::Font(juce::FontOptions{}.withHeight(15.0f)).boldened());
+    mixerHeader.setColour(juce::Label::textColourId, DJLook::accent);
+    const char* chanNames[2] = { "A", "B" };
+    for (int d = 0; d < 2; ++d) {
+        addAndMakeVisible(chanCaps[d]);
+        addAndMakeVisible(chanMeters[d]);
+        chanCaps[d].setText(chanNames[d], juce::dontSendNotification);
+        chanCaps[d].setJustificationType(juce::Justification::centred);
+        chanCaps[d].setColour(juce::Label::textColourId, DJLook::accent);
+        chanCaps[d].setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)).boldened());
+    }
+    loadMidiMap();
+    // Replay the persisted map into the engine's realtime grid.
+    engine.clearMidiGrid();
+    for (const auto& b : midiMap.all())
+        engine.bindMidi(b.channel, b.cc, b.deck, b.target);
+    loadSettings();
+
+    setSize(1100, 824);
+    startTimerHz(30);
+}
+
+MainComponent::~MainComponent() {
+    setLookAndFeel(nullptr);
+}
+
+void MainComponent::applyEq(int deck) {
+    const auto& s = strips[deck];
+    engine.setEq(deck, s.low.getValue(), s.mid.getValue(), s.high.getValue());
+}
+
+void MainComponent::updateDeckHeader(int deck) {
+    const double bpm = engine.getBpm(deck);
+    juce::String text = deck == 0 ? "DECK A" : "DECK B";
+    if (engine.hasFile(deck))
+        text += bpm > 0.0 ? " | " + juce::String(bpm, 1) + " BPM" : " | -- BPM";
+    strips[deck].header.setText(text, juce::dontSendNotification);
+}
+
+juce::Slider* MainComponent::sliderFor(int deck, lean::MidiTarget target) {
+    switch (target) {
+        case lean::MidiTarget::Tempo: return &strips[deck & 1].tempo;
+        case lean::MidiTarget::Gain: return &strips[deck & 1].gain;
+        case lean::MidiTarget::Fader: return &strips[deck & 1].fader;
+        case lean::MidiTarget::Low: return &strips[deck & 1].low;
+        case lean::MidiTarget::Mid: return &strips[deck & 1].mid;
+        case lean::MidiTarget::High: return &strips[deck & 1].high;
+        case lean::MidiTarget::Xfade: return &xfade;
+        case lean::MidiTarget::Master: return &topBar.masterKnob;
+        case lean::MidiTarget::Blend: return &cueBlend;
+        case lean::MidiTarget::Phones: return &topBar.phonesKnob;
+        case lean::MidiTarget::None: return nullptr;
+    }
+    return nullptr;
+}
+
+juce::File MainComponent::midiMapFile() const {
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("TRANSIT/midimap.txt");
+}
+
+void MainComponent::loadMidiMap() {
+    const auto f = midiMapFile();
+    if (f.existsAsFile())
+        midiMap.load(f.loadFileAsString().toStdString());
+}
+
+void MainComponent::saveMidiMap() {
+    const auto f = midiMapFile();
+    f.getParentDirectory().createDirectory();
+    f.replaceWithText(midiMap.save());
+}
+
+void MainComponent::openFile(int deck) {
+    auto chooser = std::make_shared<juce::FileChooser>(
+        "Open audio file", browserDir, "*.wav;*.mp3;*.flac;*.ogg;*.m4a;*.aac;*.mp4");
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this, deck, chooser](const juce::FileChooser& fc) {
+            const auto file = fc.getResult();
+            if (file == juce::File())
+                return;
+            juce::String error;
+            if (engine.loadFile(deck, file.getFullPathName(), error)) {
+                engine.play(deck, true);
+                strips[deck].status.setText(file.getFileName(), juce::dontSendNotification);
+                updateDeckHeader(deck);
+            } else {
+                strips[deck].status.setText("Load failed: " + error,
+                                            juce::dontSendNotification);
+            }
+        });
+}
+
+void MainComponent::openSettings() {
+    auto dialog = std::make_unique<SettingsDialog>(
+        engine, showBpm,
+        [this] {
+            refreshBrowserList();
+            sysStatus.setText("Library index cleared", juce::dontSendNotification);
+        },
+        [this] {
+            midiMap = lean::MidiMap();
+            saveMidiMap();
+            sysStatus.setText("MIDI map reset", juce::dontSendNotification);
+        },
+        [this](bool sync) { setBeatModeUI(sync); },
+        [this](bool show) { showBpm = show; },
+        [this] { saveSettings(); });
+    dialog->setSize(420, 500);
+    juce::DialogWindow::LaunchOptions opts;
+    opts.content.setOwned(dialog.release());
+    opts.dialogTitle = "Setup";
+    opts.dialogBackgroundColour = DJLook::bg;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar = true;
+    opts.resizable = false;
+    opts.componentToCentreAround = this;
+    opts.launchAsync();
+}
+
+void MainComponent::setBeatModeUI(bool syncMode) {
+    engine.setBeatMode(syncMode ? AudioEngine::BeatMode::Sync
+                                : AudioEngine::BeatMode::Free);
+    for (int d = 0; d < 2; ++d) {
+        strips[d].sync.setVisible(syncMode);
+        if (!syncMode)
+            strips[d].sync.setToggleState(false, juce::dontSendNotification);
+    }
+    sysStatus.setText(syncMode ? "Sync mode: SYNC locks tempo, jumps hold phase"
+                               : "Free mode: CDJ-style, no sync",
+                      juce::dontSendNotification);
+}
+
+juce::File MainComponent::settingsFile() const {
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("TRANSIT/settings.txt");
+}
+
+void MainComponent::loadSettings() {
+    showBpm = true;
+    const auto f = settingsFile();
+    bool sync = false;
+    bool eco = false;
+    juce::StringArray auxPaths;
+    if (f.existsAsFile()) {
+        for (const auto& ln : juce::StringArray::fromLines(f.loadFileAsString())) {
+            if (ln.startsWith("mode="))
+                sync = ln.substring(5).trim() == "sync";
+            else if (ln.startsWith("showBpm="))
+                showBpm = ln.substring(8).trim() != "0";
+            else if (ln.startsWith("keyEco="))
+                eco = ln.substring(7).trim() != "0";
+            else if (ln.startsWith("aux"))
+                auxPaths.add(ln.fromFirstOccurrenceOf("=", false, false).trim());
+        }
+    }
+    engine.setKeylockEco(eco);
+    setBeatModeUI(sync);
+    // Reload persisted aux plugins (slow ones cost startup time; failures
+    // only land in the status line, never crash startup).
+    for (int a = 0; a < 4 && a < auxPaths.size(); ++a) {
+        if (auxPaths[a].isNotEmpty()) {
+            juce::String error;
+            if (engine.loadAuxPlugin(a, auxPaths[a], error)) {
+                auxStrips[a].slot.setButtonText(engine.auxName(a));
+                auxStrips[a].edit.setEnabled(engine.auxHasEditor(a));
+            } else {
+                sysStatus.setText("AUX " + juce::String(a + 1) + ": " + error,
+                                  juce::dontSendNotification);
+            }
+        }
+    }
+}
+
+void MainComponent::saveSettings() {
+    juce::String text;
+    text += juce::String("mode=")
+        + (engine.beatMode() == AudioEngine::BeatMode::Sync ? "sync" : "free")
+        + "\n";
+    text += juce::String("showBpm=") + (showBpm ? "1" : "0") + "\n";
+    text += juce::String("keyEco=") + (engine.keylockEco() ? "1" : "0") + "\n";
+    for (int a = 0; a < 4; ++a)
+        text += "aux" + juce::String(a) + "=" + engine.auxPath(a) + "\n";
+    const auto f = settingsFile();
+    f.getParentDirectory().createDirectory();
+    f.replaceWithText(text);
+}
+
+void MainComponent::showBrowser(bool show) {
+    juce::Component* browserWidgets[] = {
+        &folderButton, &toA, &toB, &folderLabel, &libraryHeader, &searchBox,
+        &browserGlass, &fileList, &midiCombo, &learnButton, &sysStatus
+    };
+    for (auto* w : browserWidgets)
+        w->setVisible(show);
+    fxPage.setVisible(!show);
+}
+
+void MainComponent::pickAuxPlugin(int aux) {
+    juce::PopupMenu menu;
+    menu.addItem("Unload", false, false, [this, aux] {
+        engine.unloadAuxPlugin(aux);
+        auxStrips[aux].slot.setButtonText("Empty");
+        auxStrips[aux].edit.setEnabled(false);
+        saveSettings();
+    });
+    menu.addSeparator();
+    const auto found = engine.scanAuxPlugins();
+    int id = 1;
+    for (const auto& entry : found) {
+        const auto display = entry.upToFirstOccurrenceOf("|", false, false);
+        const auto path = entry.fromFirstOccurrenceOf("|", false, false);
+        menu.addItem(display, true, false, [this, aux, path, display] {
+            juce::String error;
+            if (engine.loadAuxPlugin(aux, path, error)) {
+                auxStrips[aux].slot.setButtonText(display);
+                auxStrips[aux].edit.setEnabled(engine.auxHasEditor(aux));
+                sysStatus.setText("AUX " + juce::String(aux + 1) + ": " + display,
+                                  juce::dontSendNotification);
+                saveSettings();
+            } else {
+                sysStatus.setText("AUX load failed: " + error,
+                                  juce::dontSendNotification);
+            }
+        });
+        if (++id > 200)
+            break; // sanity cap on menu size
+    }
+    if (found.isEmpty())
+        menu.addItem("(no VST3 found)", false, false, [] {});
+    menu.showMenuAsync(juce::PopupMenu::Options().withParentComponent(this));
+}
+
+void MainComponent::openFolder() {
+    auto chooser = std::make_shared<juce::FileChooser>("Browse music folder");
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+        [this, chooser](const juce::FileChooser& fc) {
+            const auto dir = fc.getResult();
+            if (dir == juce::File())
+                return;
+            browserDir = dir;
+            int touched = 0;
+            if (engine.indexFolder(dir.getFullPathName(), touched))
+                folderLabel.setText(
+                    dir.getFullPathName() + " - " + juce::String(touched)
+                        + " indexed",
+                    juce::dontSendNotification);
+            else
+                folderLabel.setText(dir.getFullPathName(), juce::dontSendNotification);
+            searchBox.setText("", juce::dontSendNotification);
+            refreshBrowserList();
+        });
+}
+
+void MainComponent::refreshBrowserList() {
+    juce::StringArray paths;
+    const auto q = searchBox.getText().trim();
+    if (q.isNotEmpty()) {
+        for (const auto& p : engine.searchLibrary(q.toStdString()))
+            paths.add(juce::String(p));
+    } else if (browserDir != juce::File()) {
+        for (const auto& ext : { "*.wav", "*.mp3", "*.flac", "*.ogg",
+                                "*.m4a", "*.aac", "*.mp4" }) {
+            for (const auto& f : browserDir.findChildFiles(
+                     juce::File::findFiles, false, ext))
+                paths.add(f.getFullPathName());
+        }
+        paths.sort(true);
+    }
+    fileModel.files = paths;
+    fileList.updateContent();
+}
+
+void MainComponent::loadBrowserRow(int row) {
+    if (row < 0 || row >= fileModel.files.size())
+        return;
+    const int deck = toB.getToggleState() ? 1 : 0;
+    const juce::File file(fileModel.files[row]);
+    juce::String error;
+    if (engine.loadFile(deck, file.getFullPathName(), error)) {
+        engine.play(deck, true);
+        strips[deck].status.setText(file.getFileName(), juce::dontSendNotification);
+        updateDeckHeader(deck);
+    } else {
+        strips[deck].status.setText("Load failed: " + error, juce::dontSendNotification);
+    }
+}
+
+juce::String MainComponent::formatTime(double seconds) const {
+    const int total = (int)seconds;
+    return juce::String(total / 60) + ":" + juce::String(total % 60).paddedLeft('0', 2);
+}
+
+void MainComponent::dumpLayout() const {
+    std::printf("layout content %dx%d\n", getWidth(), getHeight());
+    std::printf("layout topbar %d,%d %dx%d\n", topBar.getX(), topBar.getY(),
+                topBar.getWidth(), topBar.getHeight());
+    for (int d = 0; d < 2; ++d) {
+        const auto& s = strips[d];
+        std::printf("layout deck%d wave %d,%d %dx%d fader %d,%d %dx%d\n", d,
+                    s.wave->getX(), s.wave->getY(), s.wave->getWidth(),
+                    s.wave->getHeight(), s.fader.getX(), s.fader.getY(),
+                    s.fader.getWidth(), s.fader.getHeight());
+    }
+    std::printf("layout xfade %d,%d %dx%d filelist %d,%d %dx%d\n",
+                xfade.getX(), xfade.getY(), xfade.getWidth(), xfade.getHeight(),
+                fileList.getX(), fileList.getY(), fileList.getWidth(),
+                fileList.getHeight());
+    std::printf("layout fxpage %d,%d %dx%d visible=%d\n", fxPage.getX(),
+                fxPage.getY(), fxPage.getWidth(), fxPage.getHeight(),
+                (int)fxPage.isVisible());
+    const auto& a0 = auxStrips[0];
+    std::printf("layout aux0 slot %d,%d %dx%d sendA %d,%d %dx%d\n",
+                a0.slot.getX(), a0.slot.getY(), a0.slot.getWidth(),
+                a0.slot.getHeight(), a0.sendA.getX(), a0.sendA.getY(),
+                a0.sendA.getWidth(), a0.sendA.getHeight());
+}
+
+void MainComponent::timerCallback() {
+    float masterPeak = 0.0f, chA = 0.0f, chB = 0.0f;
+    engine.takePeaks(masterPeak, chA, chB);
+    meterShown = std::max(masterPeak, meterShown * 0.94f);
+    topBar.pushMaster(masterPeak);
+    engine.pumpFx();
+    if (engine.fxRateDirty())
+        engine.prepareFx(engine.currentSampleRate());
+    topBar.recTab.setToggleState(engine.isRecording(),
+                                 juce::dontSendNotification);
+    topBar.clockLabel.setText(juce::Time::getCurrentTime().formatted("%H:%M"),
+                              juce::dontSendNotification);
+    const float chPeak[2] = { chA, chB };
+    auto reflect = [](juce::Slider& sl, double v) {
+        if (!sl.isMouseButtonDown() && std::abs(sl.getValue() - v) > 1e-4)
+            sl.setValue(v, juce::dontSendNotification);
+    };
+    // MIDI learn: bind the most recent CC to the armed control.
+    if (learnButton.getToggleState() && pending.has_value()) {
+        const uint64_t stamp = engine.midiLearnStamp();
+        if (stamp != learnSeen) {
+            learnSeen = stamp;
+            int ch = 0, cc = 0;
+            engine.midiLearnEvent(ch, cc);
+            midiMap.bind(ch, cc, pending->deck, pending->target);
+            engine.bindMidi(ch, cc, pending->deck, pending->target);
+            saveMidiMap();
+            sysStatus.setText("Bound ch " + juce::String(ch) + " CC "
+                                  + juce::String(cc),
+                              juce::dontSendNotification);
+            pending.reset();
+            learnButton.setToggleState(false, juce::dontSendNotification);
+        }
+    }
+    engine.updateSync();
+    for (int d = 0; d < 2; ++d) {
+        // Reflect audio-side control state (MIDI moves, sync chase).
+        reflect(strips[d].tempo, engine.getTempo(d));
+        reflect(strips[d].gain, engine.getGain(d));
+        reflect(strips[d].fader, engine.getFader(d));
+        double lo = 0.0, mi = 0.0, hi = 0.0;
+        engine.getEq(d, lo, mi, hi);
+        reflect(strips[d].low, lo);
+        reflect(strips[d].mid, mi);
+        reflect(strips[d].high, hi);
+        chanShown[d] = std::max(chPeak[d], chanShown[d] * 0.94f);
+        chanMeters[d].setLevel(chanShown[d]);
+        strips[d].time.setText(
+            formatTime(engine.getPositionSeconds(d)) + " / "
+                + formatTime(engine.getLengthSeconds(d)),
+            juce::dontSendNotification);
+        strips[d].play.setToggleState(engine.isPlaying(d),
+                                      juce::dontSendNotification);
+        strips[d].sync.setToggleState(engine.isSync(d),
+                                      juce::dontSendNotification);
+        if (engine.isSync(d))
+            strips[d].tempo.setValue(engine.getTempo(d),
+                                     juce::dontSendNotification);
+        // Live effective tempo: analyzed BPM follows the pitch fader, unless
+        // the user hid it in Free mode (Sync always shows it).
+        juce::String text = d == 0 ? "DECK A" : "DECK B";
+        const bool show = showBpm
+            || engine.beatMode() == AudioEngine::BeatMode::Sync;
+        if (engine.hasFile(d) && show) {
+            const double eff = engine.getBpm(d) * engine.getTempo(d);
+            text += eff > 0.0 ? " | " + juce::String(eff, 1) + " BPM"
+                              : " | -- BPM";
+        }
+        if (text != lastHeader[d]) {
+            lastHeader[d] = text;
+            strips[d].header.setText(text, juce::dontSendNotification);
+        }
+    }
+    reflect(xfade, engine.getXfade());
+    reflect(topBar.masterKnob, engine.getMaster());
+    reflect(topBar.phonesKnob, engine.getPhonesLevel());
+    reflect(cueBlend, engine.getBlend());
+    repaint();
+}
+
+void MainComponent::paint(juce::Graphics& g) {
+    juce::ColourGradient grad(DJLook::bg.brighter(0.06f), 0.0f, 0.0f, DJLook::bg, 0.0f,
+                              (float)getHeight(), false);
+    g.setGradientFill(grad);
+    g.fillAll();
+    const auto meterArea = getLocalBounds().removeFromBottom(26).reduced(12, 7);
+    g.setColour(juce::Colour(0xff0a0d10));
+    g.fillRoundedRectangle(meterArea.toFloat(), 3.0f);
+    const float level = juce::jlimit(0.0f, 1.0f, meterShown);
+    if (level > 0.001f) {
+        juce::ColourGradient mg(DJLook::cyan, (float)meterArea.getX(), 0.0f,
+                                level > 0.95f ? DJLook::alarm : DJLook::accent,
+                                (float)meterArea.getRight(), 0.0f, false);
+        mg.addColour(0.75, DJLook::accent);
+        g.setGradientFill(mg);
+        g.fillRoundedRectangle(
+            meterArea.withWidth((int)((float)meterArea.getWidth() * level)).toFloat(), 3.0f);
+    }
+}
+
+void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
+    auto headRow = panel.removeFromTop(28);
+    s.header.setBounds(headRow.removeFromLeft(headRow.getWidth() - 140));
+    headRow.removeFromLeft(6);
+    s.sync.setBounds(headRow.removeFromLeft(58));
+    headRow.removeFromLeft(6);
+    s.zoomOutBtn.setBounds(headRow.removeFromLeft(32));
+    headRow.removeFromLeft(6);
+    s.zoomInBtn.setBounds(headRow.removeFromLeft(32));
+    auto buttons = panel.removeFromTop(30);
+    s.open.setBounds(buttons.removeFromLeft(64));
+    buttons.removeFromLeft(5);
+    s.play.setBounds(buttons.removeFromLeft(52));
+    buttons.removeFromLeft(5);
+    s.cue.setBounds(buttons.removeFromLeft(52));
+    buttons.removeFromLeft(5);
+    s.key.setBounds(buttons.removeFromLeft(52));
+    s.status.setBounds(panel.removeFromTop(22));
+    auto timeRow = panel.removeFromTop(20);
+    s.back.setBounds(timeRow.removeFromLeft(40));
+    timeRow.removeFromLeft(6);
+    s.fwd.setBounds(timeRow.removeFromRight(40));
+    timeRow.removeFromRight(6);
+    s.time.setBounds(timeRow);
+    s.tempo.setBounds(panel.removeFromTop(30));
+    if (s.wave)
+        s.wave->setBounds(panel.reduced(0, 2));
+}
+
+void MainComponent::resized() {
+    // TopBar bleeds edge to edge; everything below keeps its margins.
+    auto full = getLocalBounds();
+    topBar.setBounds(full.removeFromTop(64));
+    auto area = full.reduced(12);
+    area.removeFromBottom(34); // meter
+    auto browser = area.removeFromBottom(220);
+    area.removeFromBottom(8);
+
+    // Club layout: deck | mixer | deck.
+    constexpr int centerW = 300;
+    const int deckW = (area.getWidth() - centerW - 24) / 2;
+    layoutDeck(strips[0], area.removeFromLeft(deckW));
+    area.removeFromLeft(12);
+    auto center = area.removeFromLeft(centerW);
+    area.removeFromLeft(12);
+    layoutDeck(strips[1], area);
+
+    // Mixer strip: header, channel caps, 4 knob rows, PFL + faders, xfade row.
+    // PFL sits with the faders, DJM-style, not at the top.
+    mixerHeader.setBounds(center.removeFromTop(28));
+
+    auto chanRow = center.removeFromTop(18);
+    chanRow.removeFromLeft(56);
+    chanCaps[0].setBounds(chanRow.removeFromLeft(chanRow.getWidth() / 2));
+    chanCaps[1].setBounds(chanRow);
+
+    juce::Slider* knobsA[4] = { &strips[0].gain, &strips[0].low, &strips[0].mid,
+                                &strips[0].high };
+    juce::Slider* knobsB[4] = { &strips[1].gain, &strips[1].low, &strips[1].mid,
+                                &strips[1].high };
+    for (int k = 0; k < 4; ++k) {
+        auto row = center.removeFromTop(44);
+        strips[0].knobCaps[k].setBounds(row.removeFromLeft(56));
+        const int cw = row.getWidth() / 2;
+        knobsA[k]->setBounds(row.removeFromLeft(cw).reduced(10, 2));
+        knobsB[k]->setBounds(row.reduced(10, 2));
+    }
+
+    auto fadRow = center.removeFromTop(190);
+    const int fw = fadRow.getWidth() / 2;
+    auto colA = fadRow.removeFromLeft(fw);
+    strips[0].pfl.setBounds(colA.removeFromTop(28).withSizeKeepingCentre(84, 24));
+    chanMeters[0].setBounds(colA.removeFromLeft(14).reduced(0, 6));
+    strips[0].fader.setBounds(colA.withSizeKeepingCentre(40, 162));
+    strips[1].pfl.setBounds(fadRow.removeFromTop(28).withSizeKeepingCentre(84, 24));
+    chanMeters[1].setBounds(fadRow.removeFromLeft(14).reduced(0, 6));
+    strips[1].fader.setBounds(fadRow.withSizeKeepingCentre(40, 162));
+
+    auto xRow = center;
+    mixerCaps[0].setBounds(xRow.removeFromLeft(56));
+    xRow.removeFromLeft(4);
+    auto blendCol = xRow.removeFromRight(56);
+    xfade.setBounds(xRow);
+    mixerCaps[2].setBounds(blendCol.removeFromTop(14));
+    cueBlend.setBounds(blendCol);
+
+    auto brow = browser;
+    browserGlass.setBounds(brow);
+    auto inner = brow.reduced(12, 10);
+    fxPage.setBounds(brow);
+    {
+        // FX view shares the browser footprint: 4 aux strips across.
+        auto fx = inner;
+        const int sw = fx.getWidth() / 4;
+        for (int a = 0; a < 4; ++a) {
+            auto& s = auxStrips[a];
+            auto strip = fx.removeFromLeft(sw).reduced(8, 4);
+            s.header.setBounds(strip.removeFromTop(26));
+            s.slot.setBounds(strip.removeFromTop(30));
+            strip.removeFromTop(4);
+            auto brow2 = strip.removeFromTop(28);
+            s.bypass.setBounds(brow2.removeFromLeft(70));
+            brow2.removeFromLeft(6);
+            s.edit.setBounds(brow2.removeFromLeft(70));
+            strip.removeFromTop(4);
+            auto caps = strip.removeFromTop(14);
+            const int kw = caps.getWidth() / 3;
+            s.capA.setBounds(caps.removeFromLeft(kw));
+            s.capB.setBounds(caps.removeFromLeft(kw));
+            s.capR.setBounds(caps);
+            auto knobs = strip;
+            s.sendA.setBounds(knobs.removeFromLeft(kw).reduced(8, 2));
+            s.sendB.setBounds(knobs.removeFromLeft(kw).reduced(8, 2));
+            s.ret.setBounds(knobs.reduced(8, 2));
+        }
+    }
+    auto top = inner.removeFromTop(30);
+    libraryHeader.setBounds(top.removeFromLeft(96));
+    top.removeFromLeft(8);
+    folderButton.setBounds(top.removeFromLeft(100));
+    top.removeFromLeft(8);
+    toA.setBounds(top.removeFromLeft(60));
+    top.removeFromLeft(6);
+    toB.setBounds(top.removeFromLeft(60));
+    top.removeFromLeft(8);
+    folderLabel.setBounds(top.removeFromLeft(top.getWidth() / 2));
+    searchBox.setBounds(top);
+    inner.removeFromTop(6);
+    auto sys = inner.removeFromTop(30);
+    midiCombo.setBounds(sys.removeFromLeft(170));
+    sys.removeFromLeft(8);
+    learnButton.setBounds(sys.removeFromLeft(70));
+    sys.removeFromLeft(8);
+    sysStatus.setBounds(sys);
+    fileList.setBounds(inner);
+}
