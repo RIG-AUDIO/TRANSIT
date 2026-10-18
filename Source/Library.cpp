@@ -58,6 +58,7 @@ std::filesystem::path fromUtf8(const std::string& s) {
 } // namespace
 
 Library::~Library() {
+    std::lock_guard<std::mutex> lock(mutex);
     if (db) {
         sqlite3_close(db);
         db = nullptr;
@@ -65,6 +66,7 @@ Library::~Library() {
 }
 
 bool Library::open(const std::string& dbPath, std::string& error) {
+    std::lock_guard<std::mutex> lock(mutex);
     if (db)
         return true;
     const int rc = sqlite3_open(dbPath.c_str(), &db);
@@ -98,6 +100,7 @@ bool Library::isAudioFile(const std::string& filename) {
 }
 
 int Library::scanFolder(const std::string& folderUtf8) {
+    std::lock_guard<std::mutex> lock(mutex);
     if (!db)
         return -1;
     namespace fs = std::filesystem;
@@ -148,6 +151,7 @@ int Library::scanFolder(const std::string& folderUtf8) {
 
 std::vector<std::string> Library::search(const std::string& query) {
     std::vector<std::string> out;
+    std::lock_guard<std::mutex> lock(mutex);
     if (!db)
         return out;
     sqlite3_stmt* stmt = nullptr;
@@ -169,12 +173,15 @@ std::vector<std::string> Library::search(const std::string& query) {
 }
 
 bool Library::clear() {
+    std::lock_guard<std::mutex> lock(mutex);
     if (!db)
         return false;
     return exec(this, db, "DELETE FROM tracks");
 }
 
-int Library::count() {    if (!db)
+int Library::count() {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!db)
         return 0;
     sqlite3_stmt* stmt = nullptr;
     int n = 0;

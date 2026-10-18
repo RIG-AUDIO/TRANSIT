@@ -88,6 +88,12 @@ void Eq3::setRate(double sampleRate) {
 }
 
 void Eq3::updateIfNeeded() {
+    // Deferred state clear requested from the message thread (see reset()).
+    if (resetPending.exchange(false, std::memory_order_acq_rel)) {
+        for (auto& b : bands)
+            for (auto& q : b)
+                q.reset();
+    }
     if (!dirty.load(std::memory_order_acquire))
         return;
     dirty.store(false, std::memory_order_relaxed);
@@ -103,9 +109,9 @@ void Eq3::updateIfNeeded() {
 }
 
 void Eq3::reset() {
-    for (auto& b : bands)
-        for (auto& q : b)
-            q.reset();
+    // Never touch bands from the message thread: request it instead; the
+    // audio thread applies the clear before the next process() call.
+    resetPending.store(true, std::memory_order_release);
 }
 
 float Eq3::process(int channel, float x) {

@@ -17,6 +17,7 @@ AudioEngine::AudioEngine() {
     if (auto* device = deviceManager.getCurrentAudioDevice())
         fxRack.prepare(device->getCurrentSampleRate(), 1024);
     deviceManager.addAudioCallback(this);
+    worker = std::thread(&AudioEngine::workerLoop, this);
 }
 
 juce::String AudioEngine::applySetup(
@@ -136,6 +137,14 @@ bool AudioEngine::clearLibrary() {
 }
 
 AudioEngine::~AudioEngine() {
+    cancelPendingUpdate(); // no commits may land after teardown starts
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        quitting = true;
+    }
+    jobCv.notify_all();
+    if (worker.joinable())
+        worker.join(); // finish the in-flight decode before members die
     deviceManager.removeAudioCallback(this);
     midiIn.reset();
 }
@@ -275,25 +284,165 @@ bool AudioEngine::toggleRecord(juce::String& status) {    if (recorder.isRecordi
     return true;
 }
 
-bool AudioEngine::loadFile(int deck, const juce::String& path, juce::String& error) {
+void AudioEngine::loadFile(int deck, const juce::String& path) {
     deck &= 1;
+    LoadJob job;
+    job.kind = LoadJob::Kind::Load;
+    job.deck = deck;
+    job.token = gates[deck].submit(); // newest-wins: supersedes any in-flight
+    job.path = path.toStdString();
+    job.fileName = juce::File(path).getFileName().toStdString();
+    states[deck].store((int)lean::LoadState::Loading, std::memory_order_release);
+    errors[deck] = {};
+    names[deck] = {};
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        jobs.push_back(std::move(job));
+    }
+    jobCv.notify_one();
+}
+
+void AudioEngine::indexFolder(const juce::String& path) {
+    ensureDb();
+    if (!library.isOpen())
+        return;
+    LoadJob job;
+    job.kind = LoadJob::Kind::Index;
+    job.path = path.toStdString();
+    scanning.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        jobs.push_back(std::move(job));
+    }
+    jobCv.notify_one();
+}
+
+void AudioEngine::workerLoop() {
+    for (;;) {
+        LoadJob job;
+        {
+            std::unique_lock<std::mutex> lock(jobMutex);
+            jobCv.wait(lock, [this] { return quitting || !jobs.empty(); });
+            if (jobs.empty()) {
+                if (quitting)
+                    return;
+                continue;
+            }
+            job = std::move(jobs.front());
+            jobs.pop_front();
+        }
+        if (job.kind == LoadJob::Kind::Index)
+            runIndexJob(job);
+        else
+            runLoadJob(job);
+    }
+}
+
+void AudioEngine::runIndexJob(const LoadJob& job) {
+    int touched = -1;
+    if (library.isOpen())
+        touched = library.scanFolder(job.path); // Library serializes readers
+    lastScanCount.store(touched, std::memory_order_release);
+    // Stay "scanning" while another index job is already queued.
+    bool more = false;
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        for (const auto& j : jobs)
+            if (j.kind == LoadJob::Kind::Index)
+                more = true;
+    }
+    scanning.store(!more, std::memory_order_release);
+}
+
+void AudioEngine::runLoadJob(const LoadJob& job) {
+    const uint64_t token = job.token;
+    auto& gate = gates[job.deck];
+    if (!gate.isCurrent(token))
+        return; // superseded before start
+
+    auto publish = [this, &job, token](LoadResult&& r) {
+        r.token = token;
+        r.deck = job.deck;
+        {
+            std::lock_guard<std::mutex> lock(resultMutex);
+            results[job.deck] = std::move(r);
+            resultReady[job.deck] = true;
+        }
+        triggerUpdateAsync(); // commit runs on the message thread
+    };
+
     lean::DecodedAudio decoded;
     std::string err;
-    if (!lean::decodeFile(path.toStdString(), decoded, err)) {
-        error = juce::String(err);
-        return false;
+    if (!lean::decodeFile(job.path, decoded, err)) {
+        LoadResult r;
+        r.ok = false;
+        r.error = err;
+        r.fileName = job.fileName;
+        publish(std::move(r));
+        return;
     }
+    if (!gate.isCurrent(token))
+        return; // superseded mid-decode: drop silently
+
+    states[job.deck].store((int)lean::LoadState::Analyzing,
+                           std::memory_order_release);
     const int frames = (int)(decoded.stereo.size() / 2);
-    const int target = std::clamp((int)(frames / decoded.sampleRate * 8.0), 256, 8192);
-    waves[deck] = lean::computePeaks(decoded.stereo.data(), frames,
-                                     decoded.sampleRate, target);
-    bpm[deck] = lean::detectBpm(decoded.stereo.data(), frames, decoded.sampleRate);
-    mixer.channel(deck).deck.load(std::move(decoded.stereo), decoded.sampleRate);
-    if (auto* device = deviceManager.getCurrentAudioDevice())
-        mixer.setOutputRate(device->getCurrentSampleRate());
-    mixer.reset();
-    fileLoaded[deck] = true;
-    return true;
+    const double rate = decoded.sampleRate;
+    const int target = std::clamp((int)(frames / rate * 8.0), 256, 8192);
+    LoadResult r;
+    r.ok = true;
+    r.fileName = job.fileName;
+    r.bpm = lean::detectBpm(decoded.stereo.data(), frames, rate);
+    r.wave = lean::computePeaks(decoded.stereo.data(), frames, rate, target);
+    r.stereo = std::move(decoded.stereo);
+    r.rate = rate;
+    if (!gate.isCurrent(token))
+        return; // superseded during analysis: drop silently
+    publish(std::move(r));
+}
+
+void AudioEngine::handleAsyncUpdate() {
+    LoadResult local[2];
+    bool ready[2] = { false, false };
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        for (int d = 0; d < 2; ++d) {
+            if (resultReady[d]) {
+                local[d] = std::move(results[d]);
+                resultReady[d] = false;
+                ready[d] = true;
+            }
+        }
+    }
+    for (int d = 0; d < 2; ++d) {
+        if (!ready[d])
+            continue;
+        LoadResult& r = local[d];
+        if (!gates[d].accept(r.token))
+            continue; // newest-wins: a newer submission owns this deck
+        if (!r.ok) {
+            // Previous track (if any) stays loaded; the attempt failed.
+            errors[d] = juce::String(r.error);
+            names[d] = {};
+            states[d].store((int)lean::LoadState::Error,
+                            std::memory_order_release);
+            continue;
+        }
+        // Commit on the message thread: every reader (paint, timer) runs on
+        // this thread, so each field below is observed atomically as a set.
+        waves[d] = std::move(r.wave);
+        bpm[d] = r.bpm;
+        names[d] = juce::String(r.fileName);
+        errors[d] = {};
+        fileLoaded[d] = true;
+        states[d].store((int)lean::LoadState::Ready, std::memory_order_release);
+        mixer.channel(d).deck.load(std::move(r.stereo), r.rate); // staged
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+            mixer.setOutputRate(device->getCurrentSampleRate());
+        mixer.reset(); // deferred EQ clear (Eq3::reset is a request)
+        if (onDeckReady)
+            onDeckReady(d);
+    }
 }
 
 float AudioEngine::takePeak() {

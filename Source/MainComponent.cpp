@@ -292,8 +292,16 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     folderLabel.setText("No folder", juce::dontSendNotification);
     searchBox.setTextToShowWhenEmpty("Search indexed library...",
                                      juce::Colours::grey);
-    searchBox.onTextChange = [this] { refreshBrowserList(); };
+    // Debounced search: restart a short timer per keystroke so the SQLite
+    // query runs after typing pauses, not on every character (review S6).
+    searchDebounce.owner = this;
+    searchBox.onTextChange = [this] { searchDebounce.startTimer(150); };
     fileModel.onDoubleClick = [this](int row) { loadBrowserRow(row); };
+    // Auto-play and header refresh once an async load commits (review S5).
+    engine.onDeckReady = [this](int deck) {
+        engine.play(deck, true);
+        updateDeckHeader(deck);
+    };
 
     addAndMakeVisible(midiCombo);
     addAndMakeVisible(learnButton);
@@ -404,6 +412,12 @@ void MainComponent::applyEq(int deck) {
     engine.setEq(deck, s.low.getValue(), s.mid.getValue(), s.high.getValue());
 }
 
+void MainComponent::SearchDebounce::timerCallback() {
+    stop(); // one-shot: fires once typing pauses
+    if (owner)
+        owner->refreshBrowserList();
+}
+
 void MainComponent::updateDeckHeader(int deck) {
     const double bpm = engine.getBpm(deck);
     juce::String text = deck == 0 ? "DECK A" : "DECK B";
@@ -455,15 +469,9 @@ void MainComponent::openFile(int deck) {
             const auto file = fc.getResult();
             if (file == juce::File())
                 return;
-            juce::String error;
-            if (engine.loadFile(deck, file.getFullPathName(), error)) {
-                engine.play(deck, true);
-                strips[deck].status.setText(file.getFileName(), juce::dontSendNotification);
-                updateDeckHeader(deck);
-            } else {
-                strips[deck].status.setText("Load failed: " + error,
-                                            juce::dontSendNotification);
-            }
+            // Async: the status line follows engine.deckState() from the
+            // 30 Hz timer (Loading -> filename or error).
+            engine.loadFile(deck, file.getFullPathName());
         });
 }
 
@@ -616,14 +624,11 @@ void MainComponent::openFolder() {
             if (dir == juce::File())
                 return;
             browserDir = dir;
-            int touched = 0;
-            if (engine.indexFolder(dir.getFullPathName(), touched))
-                folderLabel.setText(
-                    dir.getFullPathName() + " - " + juce::String(touched)
-                        + " indexed",
-                    juce::dontSendNotification);
-            else
-                folderLabel.setText(dir.getFullPathName(), juce::dontSendNotification);
+            indexedFolderLabel = dir.getFullPathName();
+            engine.indexFolder(dir.getFullPathName()); // async scan
+            scanNoteActive = true;
+            folderLabel.setText(indexedFolderLabel + " - scanning...",
+                                juce::dontSendNotification);
             searchBox.setText("", juce::dontSendNotification);
             refreshBrowserList();
         });
@@ -653,14 +658,7 @@ void MainComponent::loadBrowserRow(int row) {
         return;
     const int deck = toB.getToggleState() ? 1 : 0;
     const juce::File file(fileModel.files[row]);
-    juce::String error;
-    if (engine.loadFile(deck, file.getFullPathName(), error)) {
-        engine.play(deck, true);
-        strips[deck].status.setText(file.getFileName(), juce::dontSendNotification);
-        updateDeckHeader(deck);
-    } else {
-        strips[deck].status.setText("Load failed: " + error, juce::dontSendNotification);
-    }
+    engine.loadFile(deck, file.getFullPathName()); // async; status via timer
 }
 
 juce::String MainComponent::formatTime(double seconds) const {
@@ -751,6 +749,22 @@ void MainComponent::timerCallback() {
         if (engine.isSync(d))
             strips[d].tempo.setValue(engine.getTempo(d),
                                      juce::dontSendNotification);
+        // Async load pipeline -> status line (review S5): text only changes
+        // when the state or its payload actually changes.
+        juce::String statusText;
+        switch (static_cast<lean::LoadState>(engine.deckState(d))) {
+            case lean::LoadState::Empty:
+                statusText = "Deck " + juce::String(d == 0 ? "A" : "B") + ": empty";
+                break;
+            case lean::LoadState::Loading: statusText = "Loading..."; break;
+            case lean::LoadState::Analyzing: statusText = "Analyzing..."; break;
+            case lean::LoadState::Ready: statusText = engine.deckName(d); break;
+            case lean::LoadState::Error:
+                statusText = "Load failed: " + engine.deckError(d);
+                break;
+        }
+        if (statusText != strips[d].status.getText())
+            strips[d].status.setText(statusText, juce::dontSendNotification);
         // Live effective tempo: analyzed BPM follows the pitch fader, unless
         // the user hid it in Free mode (Sync always shows it).
         juce::String text = d == 0 ? "DECK A" : "DECK B";
@@ -770,6 +784,17 @@ void MainComponent::timerCallback() {
     reflect(topBar.masterKnob, engine.getMaster());
     reflect(topBar.phonesKnob, engine.getPhonesLevel());
     reflect(cueBlend, engine.getBlend());
+    // Async folder scan feedback: finalize the label (and refresh an active
+    // search result) once the worker reports no queued index job left.
+    if (scanNoteActive && !engine.scanActive()) {
+        scanNoteActive = false;
+        const int n = engine.scanCount();
+        folderLabel.setText(n >= 0 ? indexedFolderLabel + " - "
+                                         + juce::String(n) + " indexed"
+                                   : indexedFolderLabel,
+                            juce::dontSendNotification);
+        refreshBrowserList();
+    }
     repaint();
 }
 

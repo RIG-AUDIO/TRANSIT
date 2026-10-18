@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -10,7 +11,9 @@ struct sqlite3;
 namespace lean {
 
 // Track index over a SQLite database (public-domain SQLite, see README).
-// Message/worker-thread use only. All paths are UTF-8.
+// Message/worker-thread use only. All paths are UTF-8. All methods serialize
+// on an internal mutex so a background scan and message-thread searches can
+// interleave safely (never called from the audio thread).
 class Library {
 public:
     Library() = default;
@@ -33,7 +36,8 @@ public:
     static bool isAudioFile(const std::string& filename);
 
 private:
-    sqlite3* db = nullptr;
+    sqlite3* db = nullptr; // set once in open(), before any worker handoff
+    mutable std::mutex mutex; // serializes every sqlite use below open()
 };
 
 } // namespace lean

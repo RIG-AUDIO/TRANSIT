@@ -184,6 +184,15 @@ private:
     bool showBpm = true;
     CueHold cueHolds[2];
     juce::String lastHeader[2];
+    // Debounced library search (review S6): one-shot timer restarted on
+    // every keystroke; refreshBrowserList runs when typing pauses.
+    struct SearchDebounce : juce::Timer {
+        MainComponent* owner = nullptr;
+        void timerCallback() override;
+    };
+    SearchDebounce searchDebounce;
+    juce::String indexedFolderLabel; // folder chosen for the async scan
+    bool scanNoteActive = false;     // a scan is running (label "scanning")
     DJLook look;
     float meterShown = 0.0f;
 };
