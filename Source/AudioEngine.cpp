@@ -415,12 +415,12 @@ void AudioEngine::runLoadJob(const LoadJob& job) {
                            std::memory_order_release);
     const int frames = (int)(decoded.stereo.size() / 2);
     const double rate = decoded.sampleRate;
-    const int target = std::clamp((int)(frames / rate * 8.0), 256, 8192);
     LoadResult r;
     r.ok = true;
     r.fileName = job.fileName;
     r.bpm = lean::detectBpm(decoded.stereo.data(), frames, rate);
-    r.wave = lean::computePeaks(decoded.stereo.data(), frames, rate, target);
+    r.wave = lean::buildWaveform(decoded.stereo.data(), (std::int64_t)frames,
+                                 rate);
     r.stereo = std::move(decoded.stereo);
     r.rate = rate;
     if (!gate.isCurrent(token))
