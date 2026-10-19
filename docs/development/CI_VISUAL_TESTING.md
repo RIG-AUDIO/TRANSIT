@@ -87,9 +87,11 @@ plus `WaveformView::setZoomIndex`; behavior stays in the engine/view classes.
    29 PNGs total, named `<state>-<w>x<h>.png` (pixel dimensions; the
    `hidpi` frame is named `hidpi-2560x1600.png`). Meter levels in the
    pass-2 frames come from the `harnessSetMeters` seam (G4), since CI
-   has no audio device; the browser folder is seeded via
-   `harnessSetBrowserPath(outDir)` (G6), so every frame also shows the
-   two fixture rows with metadata columns and the selection pill.
+  has no audio device; the browser folder is seeded via
+  `harnessSetBrowserPath(outDir)` (G6), so every frame also shows the
+  two fixture rows with metadata columns (name, tempo, duration, folder,
+  size, date — the tempo is `—` because the fixture tracks are not in the
+  library index) and the selection pill.
 4. **Phase-1 validation per frame** (any failure exits non-zero and fails
    the job):
    - file exists and is non-empty,

@@ -341,13 +341,20 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   read in paint remains single-threaded as required. Deck-side
   length/duration consistency is covered by `deckload_test`.
 
-### W8 — no zoom-state persistence or tests for the zoom table  (L — tests implemented in M2)
+### W8 — no zoom-state persistence or tests for the zoom table  (L — tests in M2, persistence in round 2)
 - **Implemented:** the table and its helpers moved to the JUCE-free layer
   (`lean::kZoomSeconds`, `lean::clampZoomIndex`, `lean::zoomSpanSeconds`,
   shared by the view and the tests); `Tests/WaveformTest.cpp` pins
   both-end index clamping, "whole" -> full duration, span >= length ->
   length, and invalid length -> 0. Cross-session zoom persistence was not
-  part of the fix text (tests only) and remains out of scope.
+  part of the fix text (tests only) and stays out of scope for the
+  original milestones.
+- **Round 2 (implemented):** the per-deck zoom index is persisted in the
+  settings file (`zoom0=`, `zoom1=`) through the JUCE-free
+  `Source/UiState.h` helpers, so the rules (defaults, clamping,
+  malformed input) are gated by `Tests/UiStateTest.cpp` instead of
+  living inside the UI. A zoom change (button, wheel or programmatic
+  set) writes the settings file; startup restores the stored index.
 - Zoom table `{4,8,16,32,64,128,256,whole}` already matches the assignment
   (`Source/MainComponent.h:39-41`, default 32 s); add tests that the index
   clamps at both ends and that "whole" (`0.0`) maps to full duration.
@@ -466,12 +473,16 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   default, and the G2 flat cyan selection pill is unchanged. The harness
   gained `harnessSetBrowserPath`, which points the browser at the CI
   output folder (2 rows, row 0 selected), so every frame now shows real
-  rows instead of "(no folder)". **Residual (documented, out of M5):**
+  rows instead of "(no folder)". **Residual (closed in round 2):**
   BPM and duration columns need indexed metadata — the scan schema
-  stores only path/name/size/mtime (`Source/Library.cpp:82`), so
-  analysis-on-index (schema + worker) is deferred to the M6 report;
-  search-mode rows take folder/size/date from the path itself (search
-  stays S6-debounced, `library_test` green).
+  stored only path/name/size/mtime. The index now carries `bpm` and
+  `duration_ms` (added in place by a column migration, so existing index
+  files keep working), the scan analyses new or changed files on the
+  worker thread (decode + `lean::detectBpm`, files above 64 MB stay
+  unanalysed), and the browser reads the values through
+  `Library::metadataFor`. Rows outside the index fall back to a
+  header-only duration probe. Search-mode rows take folder/size/date
+  from the path itself (search stays S6-debounced, `library_test` green).
 
 ### G7 — scattered color/style literals  (M3 colour roles implemented; spacing/radii/type roles go to GUI_DESIGN_SYSTEM.md)
 - Raw colours at `MainComponent.cpp:31`, `MainComponent.h:54`,
@@ -597,6 +608,7 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 | **M4 — Deck redesign** | G3(partial), G4, G5, W3/W5 integration | screenshots reviewed per iteration |
 | **M5 — Mixer + browser** | G3(partial), G6, S6 UX follow-through | screenshots + library tests |
 | **M6 — Polish & validation** | G3(final), G8(finish), viewport/high-DPI sweep, docs (`WAVEFORM_ARCHITECTURE.md`, `GUI_DESIGN_SYSTEM.md`, `CI_VISUAL_TESTING.md`, `DEVELOPMENT_REPORT.md`) | full-matrix final run, artifacts archived, PR left open |
+| **Round 2 — metadata & zoom state** | G6 (BPM/duration columns), W8 (zoom persistence) | `library_test` + `uistate_test` green, GUI smoke frames show the new columns |
 
 Out of scope by rule: loops/samplers/hotcues features, dependency major
 upgrades, merges to `main`, releases.

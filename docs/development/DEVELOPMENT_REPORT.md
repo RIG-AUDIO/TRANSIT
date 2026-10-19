@@ -39,6 +39,8 @@ point. Branch `feat/gui-waveform-stability`, draft PR
 | M6 SonarQube fixes 1/2 | `3ab8972` | 39316083483 | success |
 | M6 SonarQube fixes 2/2 | `de85052` | 39318471828 | success |
 | M6 report (this file) | see PR #1 checks | see PR #1 checks | see §7 |
+| Promotion to `main` (merge commit) | `02bdc10` | 39323566806 | success |
+| Round 2 — metadata columns + zoom state | see PR #2 | see PR #2 | see §11 |
 
 Red-run history (all before the current streak): 9 red runs total —
 `ff769bd`/39129895367, `6e7c362`/39161205557, `fb9ec0d`/39166640510,
@@ -77,8 +79,9 @@ aesthetic judgement of the frames remains a human step (phase-2 list in
 - **S1–S9, S11, C1, C3, C4** — fixed by M1. **S10** (aux bypass tail-cut)
   documented as intended behaviour. **S12** — not defects.
 - **W1–W6, W8** — implemented and gated by WaveformTest (~42 named
-  checks) in M2. **W7** — verified keep. **W8 persistence** explicitly
-  out of scope.
+  checks) in M2. **W7** — verified keep. **W8 persistence** was out of
+  scope for the original milestones and is implemented in round 2
+  (`Source/UiState.h` + `Tests/UiStateTest.cpp`, see §11).
 - **G1** (badge) M3 · **G2/G7** (tokens/colours) M3 · **G3** window floor
   M4 + coverage M6 (default-windowed vs fullscreen = human decision,
   fullscreen kept) · **G4** meters M4 · **G5** status row M4 · **G6**
@@ -119,9 +122,8 @@ latest run was green, and its run ID is cited in the delivery message.
   aesthetic sign-off on the 29 frames, and the phase-2 manual checklist
   in `CI_VISUAL_TESTING.md` (audio path with a real device, MIDI, FxRack
   with third-party plugins).
-- **G6 BPM/duration columns deferred** — Library schema stores only
-  path/name/size/mtime; analysis-on-index is a schema change beyond this
-  assignment.
+- **G6 BPM/duration columns** — implemented in round 2 (index columns
+  `bpm` / `duration_ms`, scan-time analysis, browser columns); see §11.
 - **G3 default window** stays fullscreen; making windowed the default is
   a product decision, not taken here.
 - **S10** tail-cut on aux bypass/empty is intended and documented.
@@ -132,11 +134,14 @@ latest run was green, and its run ID is cited in the delivery message.
 - **gui-smoke** prints expected X11 warnings (documented); snapshot
   content is validated by the harness assertions, not by an image
   comparator with golden files.
-- **Wave zoom (W8)** does not persist across sessions (out of scope).
+- **Wave zoom (W8)** persists across sessions as of round 2 (§11); the
+  stored value is the zoom index only (no scroll offset, no per-file
+  memory).
 - The app binary a human runs locally may be an older artifact; always
   re-download `transit-linux-x64-release` from the latest green run.
-- This branch and PR #1 are **not** production-ready: they are a
-  reviewed, CI-validated milestone branch pending human merge review.
+- The promoted `main` branch and this round-2 branch are **not**
+  production-ready: they are CI-validated milestone states pending human
+  review.
 
 ## 9. Deliverables
 
@@ -156,6 +161,40 @@ latest run was green, and its run ID is cited in the delivery message.
 No local compilation or app launches were used for validation; no test
 was disabled or weakened; guard and CI checks were never touched except
 for the style conversion in §6 (behaviour verified in CI itself); the
-README warning was preserved; PR #1 remains draft and unmerged; the
-legacy identity strings remain absent from the tree (scan green in every
-run).
+README warning was preserved; the legacy identity strings remain absent
+from the tree (scan green in every run).
+
+PR #1 was merged into `main` on 2026-10-19 (merge commit `02bdc10`) on
+explicit human instruction, which superseded the "PR #1 stays draft"
+rule of the original brief (AGENTS.md rule 11 scope). The merge was
+verified by the `push: main` CI run.
+
+## 11. Round 2 — library metadata columns and zoom persistence
+
+Scope (chosen with the human after the merge): the two residuals that the
+original brief had deferred, on a new branch
+`feat/metadata-columns-zoom-state` (PR #2, draft).
+
+- **G6 — BPM and duration columns.** The library index gains two
+  columns (`bpm`, `duration_ms`), added in place by a migration so index
+  files written earlier keep working. A scan analyses new or changed
+  files on the worker thread (decode + `lean::detectBpm`); files above
+  64 MB stay unanalysed, and unreadable files keep unknown values
+  instead of failing the scan. The browser reads the values through
+  `Library::metadataFor` and falls back to a header-only duration probe
+  for files outside the index; an unknown tempo shows `—`. The new
+  columns drop out on narrow lists (time < 640 px, bpm < 760 px).
+  Gate: `library_test` writes a real 120 BPM click track and asserts the
+  recovered tempo (~120) and duration (~5 s).
+- **W8 — zoom persistence.** The per-deck zoom index is stored in the
+  settings file (`zoom0=`, `zoom1=`) through the JUCE-free
+  `Source/UiState.h` helpers, so defaults, clamping and malformed input
+  are unit-tested (`uistate_test`) instead of hiding inside the UI. Any
+  zoom change writes the settings file; startup restores the index.
+- Known limits of this round: the tempo estimate is the existing
+  autocorrelation detector (sine tones and silence have no tempo, so
+  those cells stay `—`); the duration probe covers formats JUCE can read
+  headers for; no scroll offset or per-file zoom memory is stored yet.
+  The scan analyses outside the library lock (a long folder never blocks
+  the UI), and a file that could not be read at scan time keeps its
+  unknown values until its size or timestamp changes.

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <memory>
@@ -12,6 +13,7 @@
 #include "DJLook.h"
 #include "MidiMap.h"
 #include "TopBar.h"
+#include "UiState.h"
 
 // M3 UI: two deck strips (controls + waveform with click-seek), mixer row,
 // folder browser (double-click loads to the selected deck), master meter.
@@ -74,10 +76,19 @@ private:
             if (c != zoomIdx) {
                 zoomIdx = c;
                 repaint();
+                notifyZoomChanged();
             }
         }
+        int getZoomIndex() const { return zoomIdx; }
+        // W8: fired whenever the zoom index changes so the owner can persist
+        // it (the settings file is the only cross-session state we keep).
+        std::function<void()> onZoomChanged;
 
     private:
+        void notifyZoomChanged() {
+            if (onZoomChanged)
+                onZoomChanged();
+        }
         void paintOverview(juce::Graphics& g, int W, int mainH, int stripeH,
                            double len, double pos);
         static constexpr int kStripeHeight = 14; // whole-track overview bar
@@ -185,6 +196,8 @@ private:
             juce::String folder;
             juce::String size;
             juce::String date;
+            juce::String bpm;  // G6 round 2: tempo estimate ("—" when unknown)
+            juce::String time; // G6 round 2: duration, m:ss
         };
         std::vector<Row> rows;
         std::function<void(int)> onDoubleClick;
@@ -207,6 +220,9 @@ private:
     void saveSettings();
     void refreshBrowserList();
     void loadBrowserRow(int row);
+    // G6 round 2: header-only duration probe for files that are not in the
+    // library index (no full decode, no index write).
+    juce::String probeDuration(const juce::File& file) const;
     void layoutDeck(DeckStrip& s, juce::Rectangle<int> panel);
     void applyEq(int deck);
     void updateDeckHeader(int deck);
@@ -218,6 +234,8 @@ private:
 
     AudioEngine engine;
     DeckStrip strips[2];
+    // G6 round 2: header-only duration probe for files outside the index.
+    juce::AudioFormatManager audioFormats;
     juce::Slider xfade{ juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
     juce::Slider cueBlend{ juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::TextButton folderButton{ "Folder..." };
@@ -282,6 +300,9 @@ private:
     float meterShown = 0.0f; // G4: dB-mapped unit (0..1)
     MeterHold meterHold;
     int statusAnimTick = 0; // G5: drives the LOADING... dot animation
+    // W8: set while the stored zoom index is restored at startup, so the
+    // restore itself does not write the settings file back.
+    bool suppressZoomSave = false;
     // G8 finish: per-deck change tokens for waveform invalidation.
     int waveStateSeen[2] = { -1, -1 };
     int64_t wavePosSeen[2] = { 0, 0 };

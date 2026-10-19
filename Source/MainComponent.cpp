@@ -3,6 +3,7 @@
 #include "MainComponent.h"
 
 #include <cstdio>
+#include <map>
 
 #include "SettingsDialog.h"
 
@@ -19,6 +20,7 @@ void MainComponent::WaveformView::zoomIn() {
     if (idx != zoomIdx) {
         zoomIdx = idx;
         repaint(); // W4: zoom changes repaint explicitly, not via the timer
+        notifyZoomChanged(); // W8: persist the zoom index across sessions
     }
 }
 
@@ -27,6 +29,7 @@ void MainComponent::WaveformView::zoomOut() {
     if (idx != zoomIdx) {
         zoomIdx = idx;
         repaint(); // W4
+        notifyZoomChanged(); // W8
     }
 }
 
@@ -176,8 +179,8 @@ void MainComponent::CueHold::mouseUp(const juce::MouseEvent&) {
 
 void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w,
                                               int h, bool selected) {
-    // G6 columns: name | folder | size | date, all precomputed in the
-    // model; the metadata columns drop out on narrow lists instead of
+    // G6 columns: name | bpm | time | folder | size | date, all precomputed
+    // in the model; the metadata columns drop out on narrow lists instead of
     // clipping. Selected rows keep the flat info-cyan pill (G2).
     if (selected) {
         auto area = juce::Rectangle<float>((float)w - 8.0f, (float)h - 4.0f)
@@ -194,14 +197,28 @@ void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w
     const int dateW = w >= 480 ? 92 : 0;
     const int sizeW = w >= 480 ? 78 : 0;
     const int folderW = w >= 320 ? 96 : 0;
+    const int timeW = w >= 640 ? 56 : 0;
+    const int bpmW = w >= 760 ? 64 : 0;
     int x = 12;
-    const int nameW = w - 20 - dateW - sizeW - folderW;
+    const int nameW = w - 20 - dateW - sizeW - folderW - timeW - bpmW;
     if (nameW > 40) {
         g.drawText(r.name, x, 0, nameW, h, juce::Justification::centredLeft,
                    true);
         x += nameW;
     }
     const auto metaColour = selected ? DJLook::bg : DJLook::dimInk;
+    if (bpmW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.bpm, x, 0, bpmW - 8, h,
+                   juce::Justification::centredRight, true);
+        x += bpmW;
+    }
+    if (timeW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.time, x, 0, timeW - 8, h,
+                   juce::Justification::centredRight, true);
+        x += timeW;
+    }
     if (folderW > 0) {
         g.setColour(metaColour);
         g.drawText(r.folder, x, 0, folderW, h, juce::Justification::centredLeft,
@@ -233,6 +250,7 @@ void MainComponent::FileList::returnKeyPressed(int row) {
 
 MainComponent::MainComponent() : fileList("browser", &fileModel) {
     setLookAndFeel(&look);
+    audioFormats.registerBasicFormats(); // G6 round 2: duration probes
     const char* names[2] = { "A", "B" };
     const char* knobNames[4] = { "GAIN", "LOW", "MID", "HIGH" };
     for (int d = 0; d < 2; ++d) {
@@ -273,6 +291,12 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
             s.knobCaps[k].setVisible(d == 0);
         }
         s.wave = std::make_unique<WaveformView>(engine, d);
+        // W8: persist the zoom index whenever it changes (button, wheel or
+        // programmatic set).
+        s.wave->onZoomChanged = [this] {
+            if (!suppressZoomSave)
+                saveSettings();
+        };
         addAndMakeVisible(s.wave.get());
         s.zoomInBtn.onClick = [this, d] {
             if (strips[d].wave)
@@ -664,7 +688,15 @@ void MainComponent::loadSettings() {
     bool eco = false;
     juce::StringArray auxPaths;
     if (f.existsAsFile()) {
-        for (const auto& ln : juce::StringArray::fromLines(f.loadFileAsString())) {
+        const auto text = f.loadFileAsString();
+        // W8: restore the per-deck zoom index (unknown or malformed values
+        // keep the defaults).
+        const auto ui = lean::parseUiState(text.toStdString());
+        suppressZoomSave = true;
+        for (int d = 0; d < 2; ++d)
+            strips[d].wave->setZoomIndex(ui.zoom[d]);
+        suppressZoomSave = false;
+        for (const auto& ln : juce::StringArray::fromLines(text)) {
             if (ln.startsWith("mode="))
                 sync = ln.substring(5).trim() == "sync";
             else if (ln.startsWith("showBpm="))
@@ -702,6 +734,11 @@ void MainComponent::saveSettings() {
     text += juce::String("keyEco=") + (engine.keylockEco() ? "1" : "0") + "\n";
     for (int a = 0; a < 4; ++a)
         text += "aux" + juce::String(a) + "=" + engine.auxPath(a) + "\n";
+    // W8: the per-deck zoom index is part of the cross-session UI state.
+    lean::UiState ui;
+    for (int d = 0; d < 2; ++d)
+        ui.zoom[d] = strips[d].wave ? strips[d].wave->getZoomIndex() : 3;
+    text += juce::String(lean::serializeUiState(ui));
     const auto f = settingsFile();
     f.getParentDirectory().createDirectory();
     f.replaceWithText(text);
@@ -793,6 +830,17 @@ void MainComponent::refreshBrowserList() {
         paths.sort(true);
     }
     // G6: precompute display metadata once per refresh; paint is I/O-free.
+    // Round 2 adds the tempo estimate and duration: the tempo comes from the
+    // library index (analysed at scan time), the duration from the index or
+    // from a header-only probe when the track was never indexed.
+    std::vector<std::string> pathStd;
+    pathStd.reserve((size_t)paths.size());
+    for (const auto& p : paths)
+        pathStd.push_back(p.toStdString());
+    std::map<std::string, lean::Library::TrackMeta> indexed;
+    for (const auto& kv : engine.libraryMetadata(pathStd))
+        indexed.emplace(kv.first, kv.second);
+
     fileModel.rows.clear();
     fileModel.rows.reserve((size_t)paths.size());
     for (int i = 0; i < paths.size(); ++i) {
@@ -803,9 +851,29 @@ void MainComponent::refreshBrowserList() {
         row.folder = f.getParentDirectory().getFileName();
         row.size = juce::File::descriptionOfSizeInBytes(f.getSize());
         row.date = f.getLastModificationTime().formatted("%Y-%m-%d");
+        const auto it = indexed.find(row.path.toStdString());
+        if (it != indexed.end()) {
+            if (it->second.bpm > 0.0)
+                row.bpm = juce::String(it->second.bpm, 1);
+            if (it->second.seconds > 0.0)
+                row.time = formatTime(it->second.seconds);
+        }
+        if (row.bpm.isEmpty())
+            row.bpm = "\xE2\x80\x94"; // em dash: tempo unknown
+        if (row.time.isEmpty())
+            row.time = probeDuration(f);
         fileModel.rows.push_back(std::move(row));
     }
     fileList.updateContent();
+}
+
+juce::String MainComponent::probeDuration(const juce::File& file) const {
+    // Header-only read: no sample data is decoded, no index is written.
+    std::unique_ptr<juce::AudioFormatReader> reader(
+        audioFormats.createReaderFor(file));
+    if (!reader || reader->sampleRate <= 0.0 || reader->lengthInSamples <= 0)
+        return {};
+    return formatTime((double)reader->lengthInSamples / reader->sampleRate);
 }
 
 void MainComponent::loadBrowserRow(int row) {

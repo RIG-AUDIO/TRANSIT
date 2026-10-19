@@ -182,6 +182,13 @@ public:
         ensureDb();
         return library.search(query);
     }
+    // Indexed metadata (tempo estimate, duration) for the given paths. The
+    // browser uses it to fill its metadata columns without touching the disk.
+    std::vector<std::pair<std::string, lean::Library::TrackMeta>> libraryMetadata(
+        const std::vector<std::string>& pathsUtf8) {
+        ensureDb();
+        return library.metadataFor(pathsUtf8);
+    }
 
     // MIDI input devices as (name, identifier-independent index). The UI maps
     // combo indices straight back into openMidiInput.

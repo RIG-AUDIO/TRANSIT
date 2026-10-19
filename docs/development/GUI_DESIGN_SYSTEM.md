@@ -106,11 +106,16 @@ are still token-bound (`ink`/`dimInk`/`alarm`/`accent` as roleled below).
   alarm tip, hold marker), top-bar master history (96 bins, clip colour
   on the raw peak >0.98). Constant ~18 dB/s bar fall, ~0.75 s hold then
   ~14 dB/s marker fall (`MeterHold`).
-- **Browser** (G6) — `name | folder | size | added-date` columns,
-  precomputed (paint is I/O-free), Enter or double-click loads to the
-  selected deck (`To A`/`To B`), flat cyan selection pill (row 0 seeded in
-  CI), S6-debounced search over the SQLite index; folder choice shows
-  `path - scanning...` while the S6 worker indexes.
+- **Browser** (G6) — `name | bpm | time | folder | size | added-date`
+  columns, precomputed (paint is I/O-free), Enter or double-click loads to
+  the selected deck (`To A`/`To B`), flat cyan selection pill (row 0
+  seeded in CI), S6-debounced search over the SQLite index; folder choice
+  shows `path - scanning...` while the S6 worker indexes. The tempo and
+  duration columns come from the library index (analysed at scan time);
+  rows outside the index fall back to a header-only duration probe and
+  show `—` for an unknown tempo. The metadata columns drop out on narrow
+  lists (time < 640 px, bpm < 760 px, folder < 320 px, size/date < 480 px)
+  instead of clipping the file name.
 - **Decks** — waveform view with overview stripe, `−/+` zoom (4 s…whole),
   `SYNC`, transport (`Play/CUE/Key`), tempo/gain/EQ/fader controls in the
   mixer; drop target + `Drop a track - double-click the library` hint.

@@ -4,6 +4,7 @@
 
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct sqlite3;
@@ -33,9 +34,26 @@ public:
     int count();
     bool clear();
 
+    // Metadata for indexed tracks (G6). `bpm` is 0.0 and `seconds` is 0.0
+    // when the track could not be analysed (unreadable file, unsupported
+    // codec, or a file above the analysis size cap).
+    struct TrackMeta {
+        double bpm = 0.0;
+        double seconds = 0.0;
+    };
+
+    // Batch lookup of indexed metadata for the given paths (UTF-8). Paths
+    // that are not in the index are omitted from the result.
+    std::vector<std::pair<std::string, TrackMeta>> metadataFor(
+        const std::vector<std::string>& pathsUtf8);
+
     static bool isAudioFile(const std::string& filename);
 
 private:
+    // Adds a column to an existing table when it is missing (schema
+    // migration for index files created before the metadata columns).
+    bool ensureColumn(const char* table, const char* column, const char* decl);
+
     sqlite3* db = nullptr; // set once in open(), before any worker handoff
     mutable std::mutex mutex; // serializes every sqlite use below open()
 };
