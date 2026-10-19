@@ -5,8 +5,8 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <cstring>
 #include <filesystem>
+#include <string_view>
 
 #ifdef _MSC_VER
 #pragma warning(push, 0)
@@ -91,9 +91,11 @@ bool Library::open(const std::string& dbPath, std::string& error) {
 
 bool Library::isAudioFile(const std::string& filename) {
     const std::string t = lower(filename);
+    const std::string_view hay(t);
     for (const char* e : { ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".mp4" }) {
-        const size_t n = strlen(e);
-        if (t.size() >= n && t.compare(t.size() - n, n, e) == 0)
+        const std::string_view ext(e);
+        if (hay.size() >= ext.size()
+            && hay.compare(hay.size() - ext.size(), ext.size(), ext) == 0)
             return true;
     }
     return false;

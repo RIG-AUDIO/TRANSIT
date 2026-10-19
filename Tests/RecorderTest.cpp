@@ -3,6 +3,7 @@
 // Recorder gates: WAV file is created with a valid header (RIFF, IEEE
 // float, stereo), sample count matches, no drops on a short take.
 #include "Recorder.h"
+#include "TempDir.h"
 
 #include <algorithm>
 #include <cmath>
@@ -27,10 +28,13 @@ uint32_t rdU32(const unsigned char* b) {
 }
 
 int run() {
-    const auto path =
-        (std::filesystem::temp_directory_path() / "transit_rec_test.wav").string();
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    const auto dir = testutil::privateTempDir("transit_rec_test");
+    if (dir.empty()) {
+        std::printf("RECORDER_TEST FAIL: cannot create temp dir\n");
+        return 1;
+    }
+    const auto path = (dir / "transit_rec_test.wav").string();
 
     constexpr int rate = 48000;
     constexpr int frames = 48000;
@@ -82,7 +86,7 @@ int run() {
     check(std::abs(s[0] - L[100]) < 1e-6 && std::abs(s[1] - R[100]) < 1e-6,
           "sample roundtrip", s[0], L[100]);
 
-    std::filesystem::remove(path, ec);
+    std::filesystem::remove_all(dir, ec);
     if (failures == 0)
         std::printf("RECORDER_TEST PASS\n");
     else

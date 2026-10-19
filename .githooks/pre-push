@@ -31,9 +31,9 @@ fi
 
 # 2. stdin (pre-push hook): <local ref> SP <local sha> SP <remote ref> SP <remote sha>
 while read -r local_ref local_sha remote_ref remote_sha; do
-  [ "$local_sha" = "$zero" ] && continue  # branch deletion, nothing to scan
+  [[ "$local_sha" = "$zero" ]] && continue  # branch deletion, nothing to scan
 
-  if [ "$remote_sha" = "$zero" ] || ! git -C "$repo" cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+  if [[ "$remote_sha" = "$zero" ]] || ! git -C "$repo" cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
     # New branch (or empty remote): diff the whole tree against the empty
     # tree, so every tracked line is scanned as an addition.
     base="$(git -C "$repo" hash-object -t tree /dev/null)"
@@ -58,7 +58,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   matches="$(scan . "${excludes[@]}" \
     | grep -Ei "$pattern" \
     | grep -vE '^[+-]{3} ' || true)"
-  if [ -n "$matches" ]; then
+  if [[ -n "$matches" ]]; then
     echo "$matches" >&2
     echo "pre-push: forbidden legacy string introduced (see above)." >&2
     echo "pre-push: carve-outs: font attribution (OFL), THIRD_PARTY_NOTICES, and guard-definition files." >&2

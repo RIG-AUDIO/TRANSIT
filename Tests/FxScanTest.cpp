@@ -4,6 +4,7 @@
 // a temp-dir fixture with fake bundle names — files, directories, mixed
 // case, missing roots, and a nested bundle that must NOT be found.
 #include "FxScanPaths.h"
+#include "TempDir.h"
 
 #include <cctype>
 #include <cstdio>
@@ -31,9 +32,12 @@ std::string pathOf(const std::string& entry) {
 
 int run() {
     namespace fs = std::filesystem;
-    const auto dir = fs::temp_directory_path() / "transit_fxscan_test";
     std::error_code ec;
-    fs::remove_all(dir, ec);
+    const auto dir = testutil::privateTempDir("transit_fxscan_test");
+    if (dir.empty()) {
+        std::printf("FXSCAN_TEST FAIL: cannot create temp dir\n");
+        return 1;
+    }
     fs::create_directories(dir / "Fake Bundle.vst3", ec); // bundle = dir
     fs::create_directories(dir / "Upper.VST3", ec);       // case-insensitive
     fs::create_directories(dir / "sub" / "nested.vst3", ec); // not root

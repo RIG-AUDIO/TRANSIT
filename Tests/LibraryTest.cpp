@@ -4,6 +4,7 @@
 // case-insensitive substring, rescan is idempotent, new files appear, and
 // concurrent scan/search threads serialize without races or deadlock.
 #include "Library.h"
+#include "TempDir.h"
 
 #include <atomic>
 #include <cstdio>
@@ -31,10 +32,12 @@ bool contains(const std::vector<std::string>& v, const std::string& tail) {
 
 int run() {
     namespace fs = std::filesystem;
-    const auto dir = fs::temp_directory_path() / "transit_lib_test";
     std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir, ec);
+    const auto dir = testutil::privateTempDir("transit_lib_test");
+    if (dir.empty()) {
+        std::printf("LIBRARY_TEST FAIL: cannot create temp dir\n");
+        return 1;
+    }
     for (const char* f : { "Alpha Mix.mp3", "beta GROOVE.wav", "Gamma.flac",
                            "notes.txt", "cover.jpg" }) {
         std::ofstream(dir / f, std::ios::binary) << "data";

@@ -103,7 +103,8 @@ float Deck::frame(const DeckBuffer& buf, int index, int channel) {
 void Deck::adoptStaged() {
     if (!stagedReady.load(std::memory_order_acquire))
         return;
-    if (!stageMutex.try_lock())
+    std::unique_lock<std::mutex> lock(stageMutex, std::try_to_lock);
+    if (!lock)
         return; // message thread is staging; retry next block, never block
     if (staged) {
         active = std::move(staged);
@@ -111,7 +112,6 @@ void Deck::adoptStaged() {
         infoRate.store(active->rate, std::memory_order_relaxed);
     }
     stagedReady.store(false, std::memory_order_release);
-    stageMutex.unlock();
 }
 
 void Deck::render(float* left, float* right, int numSamples) {
