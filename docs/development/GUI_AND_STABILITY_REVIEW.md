@@ -447,11 +447,26 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   `Loading..`/`Analyzing` are too transient to capture deterministically —
   like G4's live decay/hold, that stays a human-verification residual.
 
-### G6 — browser rows show filename only  (M5)
+### G6 — browser rows show filename only  (implemented in M5)
 - `Source/MainComponent.cpp:95-97`.
 - **Fix:** metadata columns (BPM from `getBpm`, duration `formatTime`,
   folder, added-date if available), keyboard navigation, clear selection
   state — consistent with the design tokens; search debounce already S6.
+- **Fix (implemented in M5):** rows render `name | folder | size |
+  added-date`, all precomputed once in `refreshBrowserList` from the path
+  (`File::descriptionOfSizeInBytes`, mtime as `%Y-%m-%d`) so `paint`
+  stays I/O-free; the metadata columns drop out on narrow lists (<480 /
+  <320 px) instead of clipping (G3 spirit). Enter loads the selection
+  (`FileList::returnKeyPressed`), arrow navigation is the ListBox
+  default, and the G2 flat cyan selection pill is unchanged. The harness
+  gained `harnessSetBrowserPath`, which points the browser at the CI
+  output folder (2 rows, row 0 selected), so every frame now shows real
+  rows instead of "(no folder)". **Residual (documented, out of M5):**
+  BPM and duration columns need indexed metadata — the scan schema
+  stores only path/name/size/mtime (`Source/Library.cpp:82`), so
+  analysis-on-index (schema + worker) is deferred to the M6 report;
+  search-mode rows take folder/size/date from the path itself (search
+  stays S6-debounced, `library_test` green).
 
 ### G7 — scattered color/style literals  (M3 colour roles implemented; spacing/radii/type roles go to GUI_DESIGN_SYSTEM.md)
 - Raw colours at `MainComponent.cpp:31`, `MainComponent.h:54`,

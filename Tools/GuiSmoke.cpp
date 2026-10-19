@@ -393,6 +393,9 @@ int main(int argc, char** argv) {
     SmokeWindow window;
     MainComponent& content = window.content();
 
+    // G6: seed the browser folder so frames show metadata rows + selection.
+    content.harnessSetBrowserPath(outDir.getFullPathName());
+
     // Pass 1: empty state (before any file is loaded).
     for (const Viewport& vp : kViewports) {
         window.useViewport(vp.w, vp.h);

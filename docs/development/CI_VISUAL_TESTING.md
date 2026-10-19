@@ -84,7 +84,9 @@ plus `WaveformView::setZoomIndex`; behavior stays in the engine/view classes.
    - `fx` — FX page shown (`showBrowser(false)`).
    28 PNGs total, named `<state>-<w>x<h>.png`. Meter levels in the
    pass-2 frames come from the `harnessSetMeters` seam (G4), since CI
-   has no audio device.
+   has no audio device; the browser folder is seeded via
+   `harnessSetBrowserPath(outDir)` (G6), so every frame also shows the
+   two fixture rows with metadata columns and the selection pill.
 4. **Phase-1 validation per frame** (any failure exits non-zero and fails
    the job):
    - file exists and is non-empty,

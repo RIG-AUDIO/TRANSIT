@@ -176,8 +176,9 @@ void MainComponent::CueHold::mouseUp(const juce::MouseEvent&) {
 
 void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w,
                                               int h, bool selected) {
-    // Model holds full paths; display filenames only. Selected rows get the
-    // same flat info-cyan pill as the MIX tab (G2).
+    // G6 columns: name | folder | size | date, all precomputed in the
+    // model; the metadata columns drop out on narrow lists instead of
+    // clipping. Selected rows keep the flat info-cyan pill (G2).
     if (selected) {
         auto area = juce::Rectangle<float>((float)w - 8.0f, (float)h - 4.0f)
                         .withPosition(4.0f, 2.0f);
@@ -187,14 +188,47 @@ void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w
     } else {
         g.setColour(DJLook::ink);
     }
-    if (row >= 0 && row < files.size())
-        g.drawText(juce::File(files[row]).getFileName(), 12, 0, w - 20, h,
-                   juce::Justification::centredLeft, true);
+    if (row < 0 || row >= (int)rows.size())
+        return;
+    const Row& r = rows[(size_t)row];
+    const int dateW = w >= 480 ? 92 : 0;
+    const int sizeW = w >= 480 ? 78 : 0;
+    const int folderW = w >= 320 ? 96 : 0;
+    int x = 12;
+    const int nameW = w - 20 - dateW - sizeW - folderW;
+    if (nameW > 40) {
+        g.drawText(r.name, x, 0, nameW, h, juce::Justification::centredLeft,
+                   true);
+        x += nameW;
+    }
+    const auto metaColour = selected ? DJLook::bg : DJLook::dimInk;
+    if (folderW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.folder, x, 0, folderW, h, juce::Justification::centredLeft,
+                   true);
+        x += folderW;
+    }
+    if (sizeW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.size, x, 0, sizeW - 8, h,
+                   juce::Justification::centredRight, true);
+        x += sizeW;
+    }
+    if (dateW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.date, x, 0, dateW - 12, h,
+                   juce::Justification::centredRight, true);
+    }
 }
 
 void MainComponent::FileList::listBoxItemDoubleClicked(int row, const juce::MouseEvent&) {
     if (onDoubleClick)
         onDoubleClick(row);
+}
+
+void MainComponent::FileList::returnKeyPressed(int row) {
+    if (onDoubleClick)
+        onDoubleClick(row); // G6: Enter activates the selection too
 }
 
 MainComponent::MainComponent() : fileList("browser", &fileModel) {
@@ -758,15 +792,27 @@ void MainComponent::refreshBrowserList() {
         }
         paths.sort(true);
     }
-    fileModel.files = paths;
+    // G6: precompute display metadata once per refresh; paint is I/O-free.
+    fileModel.rows.clear();
+    fileModel.rows.reserve((size_t)paths.size());
+    for (int i = 0; i < paths.size(); ++i) {
+        const juce::File f(paths[i]);
+        FileList::Row row;
+        row.path = paths[i];
+        row.name = f.getFileName();
+        row.folder = f.getParentDirectory().getFileName();
+        row.size = juce::File::descriptionOfSizeInBytes(f.getSize());
+        row.date = f.getLastModificationTime().formatted("%Y-%m-%d");
+        fileModel.rows.push_back(std::move(row));
+    }
     fileList.updateContent();
 }
 
 void MainComponent::loadBrowserRow(int row) {
-    if (row < 0 || row >= fileModel.files.size())
+    if (row < 0 || row >= (int)fileModel.rows.size())
         return;
     const int deck = toB.getToggleState() ? 1 : 0;
-    const juce::File file(fileModel.files[row]);
+    const juce::File file(fileModel.rows[(size_t)row].path);
     engine.loadFile(deck, file.getFullPathName()); // async; status via timer
 }
 

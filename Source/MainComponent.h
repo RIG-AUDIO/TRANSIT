@@ -50,6 +50,14 @@ public:
             topBar.pushMaster(0.30f + 0.0074f * (float)i);
         repaint(getLocalBounds().removeFromBottom(26));
     }
+    // G6: seed the browser folder so CI frames show real metadata rows.
+    void harnessSetBrowserPath(const juce::String& dir) {
+        browserDir = juce::File(dir);
+        indexedFolderLabel = dir;
+        folderLabel.setText(dir, juce::dontSendNotification);
+        refreshBrowserList();
+        fileList.selectRow(0); // surface the G2 selection pill in shots
+    }
 
 private:
     class WaveformView : public juce::Component {
@@ -169,12 +177,22 @@ private:
     };
 
     struct FileList : public juce::ListBoxModel {
-        juce::StringArray files;
+        // G6: full path plus precomputed display columns — paint never
+        // touches the disk.
+        struct Row {
+            juce::String path;
+            juce::String name;
+            juce::String folder;
+            juce::String size;
+            juce::String date;
+        };
+        std::vector<Row> rows;
         std::function<void(int)> onDoubleClick;
-        int getNumRows() override { return files.size(); }
+        int getNumRows() override { return (int)rows.size(); }
         void paintListBoxItem(int row, juce::Graphics& g, int w, int h,
                               bool selected) override;
         void listBoxItemDoubleClicked(int row, const juce::MouseEvent&) override;
+        void returnKeyPressed(int row) override; // G6: Enter loads selection
     };
 
     void timerCallback() override;
