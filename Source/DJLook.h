@@ -28,6 +28,10 @@ public:
     static void drawLitBorder(juce::Graphics& g, juce::Rectangle<float> area,
                               float radius);
 
+    // G4: linear peak amplitude -> 0..1 over a -60..0 dB window. All level
+    // meters render in this space (instant attack, constant-dB fall).
+    static float meterUnit(float amplitude) noexcept;
+
     juce::Typeface::Ptr getTypefaceForFont(const juce::Font& font) override;
     void drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
                           float sliderPos, float minSliderPos, float maxSliderPos,

@@ -394,6 +394,7 @@ int main(int argc, char** argv) {
     // Pass 2: deterministic state set per viewport.
     for (const Viewport& vp : kViewports) {
         window.useViewport(vp.w, vp.h);
+        content.harnessSetMeters(0.72f, 0.55f, 0.88f); // G4: dB fill + hold
         snapshot(content, outDir, "loaded", vp.w, vp.h);
 
         content.harnessSetZoom(0, 0);

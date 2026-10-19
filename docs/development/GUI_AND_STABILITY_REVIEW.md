@@ -401,12 +401,25 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   (`Source/Main.cpp:44-53`) and the existing WM minimize/close behaviour
   (`Source/TopBar.cpp:79-86`).
 
-### G4 — linear (non-dB) meters  (M4)
+### G4 — linear (non-dB) meters  (implemented in M4)
 - `ChannelMeter` scales amplitude linearly (`Source/MainComponent.h:49-66`);
   master meter likewise (`Source/MainComponent.cpp:784-792`) fed by linear
   peak values from `takePeaks`.
 - **Fix:** log/dB scale with peak-hold, amber/red thresholds per the color
   rules; keep the FIFO source (S12).
+- **Fix (implemented in M4):** all three level displays render in a
+  dB-mapped space — `DJLook::meterUnit()` maps a linear peak to 0..1 over
+  −60..0 dB (`20·log10`, clamped; NaN/negative input floors to 0). Bars
+  attack instantly and fall at a constant ~18 dB/s (`kMeterFall`) instead
+  of the old `·0.94` linear decay. The channel VUs and the master meter
+  share `MeterHold` (instant attack, ~0.75 s hold at the 30 Hz tick, then
+  ~14 dB/s fall) drawn as an ink hairline; the TopBar master history strip
+  uses the same mapping, with its clip colour still on the raw peak
+  (alarm above 0.98 ≈ 0 dB). Colour rules unchanged: cyan → amber → red
+  ramps (amber stops at 0.6/0.7 of the span). FIFO source untouched (S12).
+  CI has no audio device, so `MainComponent::harnessSetMeters` seeds known
+  levels (0.72 / 0.55 / 0.88) before the pass-2 snapshots — real
+  decay/hold behaviour still needs human verification with an audio stream.
 
 ### G5 — status label doubles as filename/error/state display  (M4)
 - `Source/MainComponent.cpp:224,461-464,657-662`.

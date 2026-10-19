@@ -35,6 +35,17 @@ public:
         strips[deck & 1].wave->setZoomIndex(idx);
     }
     void harnessShowFxPage(bool show) { showBrowser(!show); }
+    // G4: seed the meters to known dB-mapped levels so CI snapshots can see
+    // the fill and peak-hold marker without an audio device.
+    void harnessSetMeters(float master, float chA, float chB) {
+        meterShown = master;
+        meterHold.push(master);
+        chanShown[0] = chA;
+        chanShown[1] = chB;
+        chanMeters[0].setLevel(chA);
+        chanMeters[1].setLevel(chB);
+        repaint(getLocalBounds().removeFromBottom(26));
+    }
 
 private:
     class WaveformView : public juce::Component {
@@ -67,27 +78,54 @@ private:
         int deck;
     };
 
-    // Thin vertical channel VU meter, Xone-style: green to amber to red.
+    // Shared meter peak-hold (G4): instant attack, ~0.75 s hold at the 30 Hz
+    // meter tick, then a slow constant fall (~14 dB/s over the -60..0 span).
+    struct MeterHold {
+        float value = 0.0f;
+        int age = 0;
+        void push(float unit) {
+            if (unit >= value) {
+                value = unit;
+                age = 22;
+            } else if (age > 0) {
+                --age;
+            } else {
+                value = juce::jmax(unit, value - 0.008f);
+            }
+        }
+    };
+
+    // Thin vertical channel VU meter, Xone-style: dB-scaled (-60..0, review
+    // G4) cyan -> amber -> red with an ink peak-hold hairline. `unit` comes
+    // from DJLook::meterUnit.
     class ChannelMeter : public juce::Component {
     public:
-        void setLevel(float v) {
-            level = v;
+        void setLevel(float unit) {
+            level = unit;
+            hold.push(unit);
             repaint();
         }
         void paint(juce::Graphics& g) override {
             g.fillAll(DJLook::well);
             const float h = juce::jlimit(0.0f, 1.0f, level) * (float)getHeight();
-            if (h <= 0.0f)
-                return;
-            juce::ColourGradient grad(DJLook::cyan, 0.0f, (float)getHeight(),
-                                      DJLook::alarm, 0.0f, 0.0f, false);
-            grad.addColour(0.6, DJLook::accent);
-            g.setGradientFill(grad);
-            g.fillRect(0, getHeight() - (int)h, getWidth(), (int)h);
+            if (h > 0.0f) {
+                juce::ColourGradient grad(DJLook::cyan, 0.0f, (float)getHeight(),
+                                          DJLook::alarm, 0.0f, 0.0f, false);
+                grad.addColour(0.6, DJLook::accent);
+                g.setGradientFill(grad);
+                g.fillRect(0, getHeight() - (int)h, getWidth(), (int)h);
+            }
+            if (hold.value > 0.004f) {
+                const int y = juce::jmax(
+                    0, getHeight() - (int)(hold.value * (float)getHeight()) - 2);
+                g.setColour(DJLook::ink);
+                g.fillRect(0, y, getWidth(), 2);
+            }
         }
 
     private:
         float level = 0.0f;
+        MeterHold hold;
     };
 
     struct CueHold : public juce::MouseListener {
@@ -185,7 +223,7 @@ private:
     juce::Label mixerHeader;
     juce::Label chanCaps[2];
     ChannelMeter chanMeters[2];
-    float chanShown[2] = { 0.0f, 0.0f };
+    float chanShown[2] = { 0.0f, 0.0f }; // G4: dB-mapped unit (0..1)
 
     struct AuxStrip {
         juce::Label header;
@@ -218,5 +256,6 @@ private:
     juce::String indexedFolderLabel; // folder chosen for the async scan
     bool scanNoteActive = false;     // a scan is running (label "scanning")
     DJLook look;
-    float meterShown = 0.0f;
+    float meterShown = 0.0f; // G4: dB-mapped unit (0..1)
+    MeterHold meterHold;
 };

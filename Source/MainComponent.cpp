@@ -6,6 +6,11 @@
 
 #include "SettingsDialog.h"
 
+namespace {
+// G4: constant meter-bar fall in unit space (~18 dB/s at the 30 Hz tick).
+constexpr float kMeterFall = 0.01f;
+} // namespace
+
 MainComponent::WaveformView::WaveformView(AudioEngine& e, int d)
     : engine(e), deck(d) {}
 
@@ -793,7 +798,9 @@ void MainComponent::dumpLayout() const {
 void MainComponent::timerCallback() {
     float masterPeak = 0.0f, chA = 0.0f, chB = 0.0f;
     engine.takePeaks(masterPeak, chA, chB);
-    meterShown = std::max(masterPeak, meterShown * 0.94f);
+    meterShown = std::max(DJLook::meterUnit(masterPeak),
+                          meterShown - kMeterFall);
+    meterHold.push(meterShown);
     topBar.pushMaster(masterPeak);
     engine.pumpFx();
     if (engine.fxRateDirty())
@@ -835,7 +842,8 @@ void MainComponent::timerCallback() {
         reflect(strips[d].low, lo);
         reflect(strips[d].mid, mi);
         reflect(strips[d].high, hi);
-        chanShown[d] = std::max(chPeak[d], chanShown[d] * 0.94f);
+        chanShown[d] = std::max(DJLook::meterUnit(chPeak[d]),
+                                chanShown[d] - kMeterFall);
         chanMeters[d].setLevel(chanShown[d]);
         strips[d].time.setText(
             formatTime(engine.getPositionSeconds(d)) + " / "
@@ -912,15 +920,22 @@ void MainComponent::paint(juce::Graphics& g) {
     const auto meterArea = getLocalBounds().removeFromBottom(26).reduced(12, 7);
     g.setColour(DJLook::deep);
     g.fillRoundedRectangle(meterArea.toFloat(), 3.0f);
-    const float level = juce::jlimit(0.0f, 1.0f, meterShown);
+    const float level = juce::jlimit(0.0f, 1.0f, meterShown); // G4: dB-mapped
     if (level > 0.001f) {
         juce::ColourGradient mg(DJLook::cyan, (float)meterArea.getX(), 0.0f,
-                                level > 0.95f ? DJLook::alarm : DJLook::accent,
-                                (float)meterArea.getRight(), 0.0f, false);
-        mg.addColour(0.75, DJLook::accent);
+                                DJLook::alarm, (float)meterArea.getRight(), 0.0f,
+                                false);
+        mg.addColour(0.7, DJLook::accent);
         g.setGradientFill(mg);
         g.fillRoundedRectangle(
             meterArea.withWidth((int)((float)meterArea.getWidth() * level)).toFloat(), 3.0f);
+    }
+    if (meterHold.value > 0.004f) {
+        const int hx = meterArea.getX()
+                       + (int)(meterHold.value * (float)meterArea.getWidth());
+        g.setColour(DJLook::ink);
+        g.fillRect(juce::jmin(hx, meterArea.getRight() - 2), meterArea.getY(),
+                   2, meterArea.getHeight());
     }
 }
 

@@ -18,13 +18,14 @@ void TopBar::MasterStrip::paint(juce::Graphics& g) {
     g.fillAll(DJLook::deep);
     const float bw = (float)W / bins;
     for (int i = 0; i < bins; ++i) {
-        const float v =
-            juce::jlimit(0.0f, 1.0f, history[(size_t)((pos + i) % bins)]);
-        if (v <= 0.01f)
+        const float v = history[(size_t)((pos + i) % bins)];
+        const float u = DJLook::meterUnit(v); // G4: dB scale
+        if (u <= 0.001f)
             continue;
-        const float h = v * (float)(H - 4);
+        const float h = u * (float)(H - 4);
         const float x = (float)i * bw;
-        // Master meter: information cyan, alarm red when near clip (G2).
+        // Master meter: information cyan, alarm red when near clip (G2) —
+        // the clip test stays on the raw peak (0.98 ≈ 0 dB).
         g.setColour(v > 0.98f ? DJLook::alarm : DJLook::cyan);
         g.fillRect(x, (float)(H - 2) - h, juce::jmax(1.0f, bw - 1.0f), h);
     }

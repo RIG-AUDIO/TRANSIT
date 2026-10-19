@@ -16,6 +16,13 @@ const juce::Colour DJLook::alarm(0xffff5252);
 const juce::Colour DJLook::ink(0xffe8ecf1);
 const juce::Colour DJLook::dimInk(0xff8b95a3);
 
+float DJLook::meterUnit(float amplitude) noexcept {
+    if (!(amplitude > 1.0e-6f)) // <= 0 and NaN land at the floor
+        return 0.0f;
+    const float db = 20.0f * std::log10(amplitude);
+    return juce::jlimit(0.0f, 1.0f, (db + 60.0f) / 60.0f);
+}
+
 void DJLook::drawGlassPanel(juce::Graphics& g, juce::Rectangle<float> area,
                             float radius) {
     juce::ColourGradient body(juce::Colour(0xff181d26), area.getX(), area.getY(),
