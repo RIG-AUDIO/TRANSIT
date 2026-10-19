@@ -29,9 +29,11 @@ private:
                              DocumentWindow::allButtons) {
             setUsingNativeTitleBar(false);
             setTitleBarHeight(0); // chromeless: the TopBar owns the chrome
-            // Fixed layout, no resize handles: the app runs fullscreen like
-            // hardware. F11 toggles, Escape leaves fullscreen.
-            setResizable(false, false);
+            // G3 (M4 partial): resizable with a hardware-like floor — the
+            // smallest CI viewport — but still opens fullscreen. F11 toggles,
+            // Escape leaves fullscreen (kept).
+            setResizable(true, true);
+            setResizeLimits(1100, 824, 16384, 16384);
             setContentOwned(new MainComponent(), true);
             setVisible(true);
             setFullScreen(true);

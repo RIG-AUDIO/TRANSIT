@@ -390,7 +390,7 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   deleted. CI: run 39258511344 green (8/8) at `6b8a808`, look verified
   from `gui-smoke-shots`.
 
-### G3 — hardcoded, non-responsive layout  (M4/M6)
+### G3 — hardcoded, non-responsive layout  (M4 partial implemented; final in M6)
 - `centerW = 300` and friends (`Source/MainComponent.cpp:835-931`),
   fixed browser/meter/top-bar sizes; window forced non-resizable +
   fullscreen (`Source/Main.cpp:34-37`).
@@ -400,6 +400,15 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   resizable); **keep** F11 toggle and Escape-exit
   (`Source/Main.cpp:44-53`) and the existing WM minimize/close behaviour
   (`Source/TopBar.cpp:79-86`).
+- **Fix (M4 partial, implemented):** the window is resizable with a
+  `setResizeLimits` floor of 1100×824 (the smallest CI viewport) and a
+  16384 ceiling (`Source/Main.cpp`); it still opens fullscreen and the
+  F11/Escape behaviour is unchanged, so windowed mode is now reachable
+  without new defaults. Layout responsiveness across sizes is exercised
+  every run — the harness resizes `MainComponent` through all four
+  viewports directly, which is the same `resized()` path a user drag
+  takes. Still M6: per-region minimum hardening beyond the window floor
+  (`centerW=300`), default-windowed evaluation, high-DPI sweep.
 
 ### G4 — linear (non-dB) meters  (implemented in M4)
 - `ChannelMeter` scales amplitude linearly (`Source/MainComponent.h:49-66`);
