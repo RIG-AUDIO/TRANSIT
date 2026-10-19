@@ -30,7 +30,7 @@ public:
 
     bool isRecording() const { return recording.load(); }
     long long droppedFrames() const { return dropped.load(); }
-    long long recordedFrames() const { return totalWritten; }
+    long long recordedFrames() const { return totalWritten.load(); }
 
 private:
     void writerLoop();
@@ -50,7 +50,8 @@ private:
     std::thread writer;
 
     void* file = nullptr; // FILE*, writer thread only (void* keeps header clean)
-    long long totalWritten = 0; // writer thread only
+    // Writer thread stores; message thread reads for UI counters (seq_cst).
+    std::atomic<long long> totalWritten{ 0 };
     double rate = 44100.0;
     std::string path;
 };

@@ -2,6 +2,8 @@
 
 #include "TopBar.h"
 
+#include <BinaryData.h>
+
 void TopBar::MasterStrip::push(float v) {
     history[(size_t)pos] = v;
     pos = (pos + 1) % bins;
@@ -13,22 +15,26 @@ void TopBar::MasterStrip::paint(juce::Graphics& g) {
     const int H = getHeight();
     if (W <= 0 || H <= 0)
         return;
-    g.fillAll(juce::Colour(0xff0a0d10));
+    g.fillAll(DJLook::deep);
     const float bw = (float)W / bins;
     for (int i = 0; i < bins; ++i) {
-        const float v =
-            juce::jlimit(0.0f, 1.0f, history[(size_t)((pos + i) % bins)]);
-        if (v <= 0.01f)
+        const float v = history[(size_t)((pos + i) % bins)];
+        const float u = DJLook::meterUnit(v); // G4: dB scale
+        if (u <= 0.001f)
             continue;
-        const float h = v * (float)(H - 4);
+        const float h = u * (float)(H - 4);
         const float x = (float)i * bw;
-        g.setColour(DJLook::neonCyan.interpolatedWith(DJLook::neonPink,
-                                                      (float)i / bins));
+        // Master meter: information cyan, alarm red when near clip (G2) —
+        // the clip test stays on the raw peak (0.98 ≈ 0 dB).
+        g.setColour(v > 0.98f ? DJLook::alarm : DJLook::cyan);
         g.fillRect(x, (float)(H - 2) - h, juce::jmax(1.0f, bw - 1.0f), h);
     }
 }
 
 TopBar::TopBar() {
+    rigMark = juce::Drawable::createFromImageData(
+        TransitFonts::rig_mark_svg, (size_t)TransitFonts::rig_mark_svgSize);
+
     addAndMakeVisible(wordmark);
     wordmark.setFont(juce::Font(juce::FontOptions{}.withHeight(24.0f)).boldened());
     wordmark.setColour(juce::Label::textColourId, DJLook::ink);
@@ -37,8 +43,8 @@ TopBar::TopBar() {
     for (auto* t : tabs) {
         addAndMakeVisible(t);
         t->getProperties().set("tab", 1);
-        t->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff9aa4b2));
-        t->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+        // On-state text stays DJLook's dark-on-fill default (flat pills).
+        t->setColour(juce::TextButton::textColourOffId, DJLook::dimInk);
         t->setRadioGroupId(400);
     }
     mixTab.setToggleState(true, juce::dontSendNotification);
@@ -101,27 +107,14 @@ void TopBar::mouseDrag(const juce::MouseEvent& event) {
 void TopBar::paint(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat().reduced(6.0f, 6.0f);
     DJLook::drawGlassPanel(g, area, 4.0f);
-    DJLook::drawNeonEdge(g, area, 4.0f);
+    DJLook::drawLitBorder(g, area, 4.0f);
 
-    // Logo badge: neon-ring "6" emblem, mix-cover style, then the wordmark.
-    const float ex = 34.0f, ey = 32.0f, er = 19.0f;
-    juce::ColourGradient ring(DJLook::neonCyan, ex - er, ey, DJLook::neonPink,
-                              ex + er, ey, false);
-    g.setGradientFill(ring);
-    g.setOpacity(0.9f);
-    g.drawEllipse(ex - er, ey - er, er * 2.0f, er * 2.0f, 2.5f);
-    g.setOpacity(0.25f);
-    g.drawEllipse(ex - er - 3.0f, ey - er - 3.0f, er * 2.0f + 6.0f,
-                  er * 2.0f + 6.0f, 2.0f);
-    g.setOpacity(1.0f);
-    g.setColour(juce::Colour(0xff10141b));
-    g.fillEllipse(ex - er + 2.5f, ey - er + 2.5f, er * 2.0f - 5.0f,
-                  er * 2.0f - 5.0f);
-    g.setColour(DJLook::ink);
-    g.setFont(juce::Font(juce::FontOptions{}.withHeight(26.0f)).boldened());
-    g.drawText("6", juce::roundToInt(ex - er), juce::roundToInt(ey - er),
-               juce::roundToInt(er * 2.0f), juce::roundToInt(er * 2.0f),
-               juce::Justification::centred);
+    // RIG brand badge (review G1): embedded vector mark in the 56 px emblem
+    // slot, drawn at the historic optical centre (34, 32).
+    if (rigMark != nullptr) {
+        const juce::Rectangle<float> box(12.0f, 10.0f, 44.0f, 44.0f);
+        rigMark->drawWithin(g, box, juce::RectanglePlacement::centred, 1.0f);
+    }
 }
 
 void TopBar::resized() {

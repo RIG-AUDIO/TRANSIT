@@ -17,6 +17,7 @@ AudioEngine::AudioEngine() {
     if (auto* device = deviceManager.getCurrentAudioDevice())
         fxRack.prepare(device->getCurrentSampleRate(), 1024);
     deviceManager.addAudioCallback(this);
+    worker = std::thread(&AudioEngine::workerLoop, this);
 }
 
 juce::String AudioEngine::applySetup(
@@ -38,10 +39,10 @@ juce::String AudioEngine::applySetup(
 }
 
 juce::StringArray AudioEngine::audioDeviceTypes() {
-    juce::StringArray names;
+    juce::StringArray list;
     for (auto* type : deviceManager.getAvailableDeviceTypes())
-        names.add(type->getTypeName());
-    return names;
+        list.add(type->getTypeName());
+    return list;
 }
 
 juce::String AudioEngine::currentAudioDeviceType() {
@@ -58,10 +59,10 @@ void AudioEngine::setAudioDeviceType(const juce::String& type) {
 }
 
 juce::StringArray AudioEngine::outputDeviceNames() {
-    juce::StringArray names;
+    juce::StringArray list;
     if (auto* type = deviceManager.getCurrentDeviceTypeObject())
-        names = type->getDeviceNames(false);
-    return names;
+        list = type->getDeviceNames(false);
+    return list;
 }
 
 juce::String AudioEngine::currentOutputDevice() const {
@@ -136,15 +137,23 @@ bool AudioEngine::clearLibrary() {
 }
 
 AudioEngine::~AudioEngine() {
+    cancelPendingUpdate(); // no commits may land after teardown starts
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        quitting = true;
+    }
+    jobCv.notify_all();
+    if (worker.joinable())
+        worker.join(); // finish the in-flight decode before members die
     deviceManager.removeAudioCallback(this);
     midiIn.reset();
 }
 
 juce::StringArray AudioEngine::midiInputNames() const {
-    juce::StringArray names;
+    juce::StringArray list;
     for (const auto& d : juce::MidiInput::getAvailableDevices())
-        names.add(d.name);
-    return names;
+        list.add(d.name);
+    return list;
 }
 
 bool AudioEngine::openMidiInput(int index) {
@@ -164,12 +173,12 @@ void AudioEngine::handleIncomingMidiMessage(juce::MidiInput*,
     // MIDI thread: stamp with the audio frame counter and queue. No UI, no
     // locks; the audio thread drains and applies at the next block.
     if (message.isController()) {
-        midiQueue.push(frameCount.load(std::memory_order_relaxed),
+        midiQueue.push(frameCount.load(std::memory_order_seq_cst),
                        message.getChannel(), message.getControllerNumber(),
                        (float)message.getControllerValue() / 127.0f);
-        learnCh.store(message.getChannel(), std::memory_order_relaxed);
-        learnCc.store(message.getControllerNumber(), std::memory_order_relaxed);
-        learnStamp.fetch_add(1, std::memory_order_relaxed);
+        learnCh.store(message.getChannel(), std::memory_order_seq_cst);
+        learnCc.store(message.getControllerNumber(), std::memory_order_seq_cst);
+        learnStamp.fetch_add(1, std::memory_order_seq_cst);
     }
 }
 
@@ -275,25 +284,201 @@ bool AudioEngine::toggleRecord(juce::String& status) {    if (recorder.isRecordi
     return true;
 }
 
-bool AudioEngine::loadFile(int deck, const juce::String& path, juce::String& error) {
+void AudioEngine::loadFile(int deck, const juce::String& path) {
     deck &= 1;
+    LoadJob job;
+    job.kind = LoadJob::Kind::Load;
+    job.deck = deck;
+    job.token = gates[deck].submit(); // newest-wins: supersedes any in-flight
+    job.path = path.toStdString();
+    job.fileName = juce::File(path).getFileName().toStdString();
+    states[deck].store((int)lean::LoadState::Loading, std::memory_order_seq_cst);
+    errors[deck] = {};
+    names[deck] = {};
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        jobs.push_back(std::move(job));
+    }
+    jobCv.notify_one();
+}
+
+void AudioEngine::indexFolder(const juce::String& path) {
+    ensureDb();
+    if (!library.isOpen())
+        return;
+    LoadJob job;
+    job.kind = LoadJob::Kind::Index;
+    job.path = path.toStdString();
+    scanning.store(true, std::memory_order_seq_cst);
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        jobs.push_back(std::move(job));
+    }
+    jobCv.notify_one();
+}
+
+void AudioEngine::workerLoop() {
+    for (;;) {
+        LoadJob job;
+        {
+            std::unique_lock<std::mutex> lock(jobMutex);
+            jobCv.wait(lock, [this] { return quitting || !jobs.empty(); });
+            if (jobs.empty()) {
+                if (quitting)
+                    return;
+                continue;
+            }
+            job = std::move(jobs.front());
+            jobs.pop_front();
+        }
+        if (job.kind == LoadJob::Kind::Index)
+            runIndexJob(job);
+        else if (job.kind == LoadJob::Kind::ScanFx)
+            runScanFxJob();
+        else
+            runLoadJob(job);
+    }
+}
+
+void AudioEngine::runIndexJob(const LoadJob& job) {
+    int touched = -1;
+    if (library.isOpen())
+        touched = library.scanFolder(job.path); // Library serializes readers
+    lastScanCount.store(touched, std::memory_order_seq_cst);
+    // Stay "scanning" while another index job is already queued.
+    bool more = false;
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        for (const auto& j : jobs)
+            if (j.kind == LoadJob::Kind::Index)
+                more = true;
+    }
+    scanning.store(!more, std::memory_order_seq_cst);
+}
+
+void AudioEngine::refreshFxScan() {
+    if (fxScanActive.exchange(true, std::memory_order_seq_cst))
+        return; // one discovery walk in flight or queued
+    LoadJob job;
+    job.kind = LoadJob::Kind::ScanFx;
+    {
+        std::lock_guard<std::mutex> lock(jobMutex);
+        jobs.push_back(std::move(job));
+    }
+    jobCv.notify_one();
+}
+
+void AudioEngine::runScanFxJob() {
+    // The walk itself is JUCE-free (FxScanPaths) and runs here, off the
+    // message thread; root collection uses thread-safe JUCE file/env calls.
+    juce::StringArray found = fxRack.scanVst3();
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        fxScanResult = std::move(found);
+        fxResultReady = true;
+    }
+    fxScanActive.store(false, std::memory_order_seq_cst);
+    triggerAsyncUpdate(); // commit lands on the message thread
+}
+
+void AudioEngine::runLoadJob(const LoadJob& job) {
+    const uint64_t token = job.token;
+    auto& gate = gates[job.deck];
+    if (!gate.isCurrent(token))
+        return; // superseded before start
+
+    auto publish = [this, &job, token](LoadResult&& r) {
+        r.token = token;
+        r.deck = job.deck;
+        {
+            std::lock_guard<std::mutex> lock(resultMutex);
+            results[job.deck] = std::move(r);
+            resultReady[job.deck] = true;
+        }
+        triggerAsyncUpdate(); // commit runs on the message thread
+    };
+
     lean::DecodedAudio decoded;
     std::string err;
-    if (!lean::decodeFile(path.toStdString(), decoded, err)) {
-        error = juce::String(err);
-        return false;
+    if (!lean::decodeFile(job.path, decoded, err)) {
+        LoadResult r;
+        r.ok = false;
+        r.error = err;
+        r.fileName = job.fileName;
+        publish(std::move(r));
+        return;
     }
+    if (!gate.isCurrent(token))
+        return; // superseded mid-decode: drop silently
+
+    states[job.deck].store((int)lean::LoadState::Analyzing,
+                           std::memory_order_seq_cst);
     const int frames = (int)(decoded.stereo.size() / 2);
-    const int target = std::clamp((int)(frames / decoded.sampleRate * 8.0), 256, 8192);
-    waves[deck] = lean::computePeaks(decoded.stereo.data(), frames,
-                                     decoded.sampleRate, target);
-    bpm[deck] = lean::detectBpm(decoded.stereo.data(), frames, decoded.sampleRate);
-    mixer.channel(deck).deck.load(std::move(decoded.stereo), decoded.sampleRate);
-    if (auto* device = deviceManager.getCurrentAudioDevice())
-        mixer.setOutputRate(device->getCurrentSampleRate());
-    mixer.reset();
-    fileLoaded[deck] = true;
-    return true;
+    const double rate = decoded.sampleRate;
+    LoadResult r;
+    r.ok = true;
+    r.fileName = job.fileName;
+    r.bpm = lean::detectBpm(decoded.stereo.data(), frames, rate);
+    r.wave = lean::buildWaveform(decoded.stereo.data(), (std::int64_t)frames,
+                                 rate);
+    r.stereo = std::move(decoded.stereo);
+    r.rate = rate;
+    if (!gate.isCurrent(token))
+        return; // superseded during analysis: drop silently
+    publish(std::move(r));
+}
+
+void AudioEngine::handleAsyncUpdate() {
+    LoadResult local[2];
+    bool ready[2] = { false, false };
+    juce::StringArray newFxList;
+    bool fxReady = false;
+    {
+        std::lock_guard<std::mutex> lock(resultMutex);
+        for (int d = 0; d < 2; ++d) {
+            if (resultReady[d]) {
+                local[d] = std::move(results[d]);
+                resultReady[d] = false;
+                ready[d] = true;
+            }
+        }
+        if (fxResultReady) {
+            newFxList = std::move(fxScanResult);
+            fxResultReady = false;
+            fxReady = true;
+        }
+    }
+    if (fxReady)
+        fxList = std::move(newFxList); // message thread owns the cache
+    for (int d = 0; d < 2; ++d) {
+        if (!ready[d])
+            continue;
+        LoadResult& r = local[d];
+        if (!gates[d].accept(r.token))
+            continue; // newest-wins: a newer submission owns this deck
+        if (!r.ok) {
+            // Previous track (if any) stays loaded; the attempt failed.
+            errors[d] = juce::String(r.error);
+            names[d] = {};
+            states[d].store((int)lean::LoadState::Error,
+                            std::memory_order_seq_cst);
+            continue;
+        }
+        // Commit on the message thread: every reader (paint, timer) runs on
+        // this thread, so each field below is observed atomically as a set.
+        waves[d] = std::move(r.wave);
+        bpm[d] = r.bpm;
+        names[d] = juce::String(r.fileName);
+        errors[d] = {};
+        fileLoaded[d] = true;
+        states[d].store((int)lean::LoadState::Ready, std::memory_order_seq_cst);
+        mixer.channel(d).deck.load(std::move(r.stereo), r.rate); // staged
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+            mixer.setOutputRate(device->getCurrentSampleRate());
+        mixer.reset(); // deferred EQ clear (Eq3::reset is a request)
+        if (onDeckReady)
+            onDeckReady(d);
+    }
 }
 
 float AudioEngine::takePeak() {
@@ -321,6 +506,7 @@ void AudioEngine::takePeaks(float& master, float& chA, float& chB) {
 
 void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device) {
     if (device) {
+        fxRack.setAudioRunning(true); // suspend handshake may begin now
         mixer.setOutputRate(device->getCurrentSampleRate());
         deviceRate = device->getCurrentSampleRate();
         fxRack.setRateDirty(true); // audio skips aux until message prepares
@@ -354,6 +540,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const*, int,
         mixer.render(left, right ? right : left, phL, phR, numSamples);
     const int64_t t1 = juce::Time::getHighResolutionTicks();
     blockFrame += (uint64_t)numSamples;
+    // Publish the audio frame counter for MIDI stamping. Events stamped with
+    // the value observed before this store apply at the next block boundary;
+    // the counter is monotonic, so the queue can never see a regression.
+    frameCount.store(blockFrame, std::memory_order_seq_cst);
 
     // Render watchdog: worst-case time and overruns past the block budget.
     const double ticksPerSec =
@@ -361,15 +551,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const*, int,
     if (ticksPerSec > 0.0 && deviceRate > 0.0) {
         const long long us =
             (long long)((double)(t1 - t0) * 1000000.0 / ticksPerSec);
-        long long prev = maxRenderUsUs.load(std::memory_order_relaxed);
+        long long prev = maxRenderUsUs.load(std::memory_order_seq_cst);
         while (us > prev
                && !maxRenderUsUs.compare_exchange_weak(prev, us,
-                                                      std::memory_order_relaxed)) {
+                                                      std::memory_order_seq_cst)) {
         }
         const long long budget =
             (long long)((double)numSamples * 1000000.0 / deviceRate);
         if (us > budget)
-            overruns.fetch_add(1, std::memory_order_relaxed);
+            overruns.fetch_add(1, std::memory_order_seq_cst);
     }
 
     if (left && recorder.isRecording())

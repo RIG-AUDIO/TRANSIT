@@ -19,6 +19,10 @@ constexpr int kAuxBuses = 4;
 struct AuxHost {
     virtual ~AuxHost() = default;
     virtual void processAux(int aux, float* left, float* right, int numSamples) = 0;
+    // Called once per render block before any processAux call, unconditionally
+    // (even when every send is silent). Reserved for block-boundary work that
+    // must run every block: plugin pickup and suspend handshakes.
+    virtual void blockBoundary() {}
 };
 
 // RBJ cookbook biquad, transposed direct form II. Coefficients are set from
@@ -53,10 +57,12 @@ class Eq3 {
 public:
     void set(double fs, double lowDb, double midDb, double highDb);
     void setRate(double fs);
+    // Message thread: request a state clear; the audio thread performs it at
+    // the start of the next render (bands are audio-thread-only).
     void reset();
     double gainDb(int band) const {
         return gains[band < 0 ? 0 : (band > 2 ? 2 : band)].load(
-            std::memory_order_relaxed);
+            std::memory_order_seq_cst);
     }
     // Audio thread: rebuild coefficients if the message thread changed them.
     void updateIfNeeded();
@@ -67,6 +73,7 @@ private:
     std::atomic<double> fs{ 44100.0 };
     std::atomic<double> gains[3] = { 0.0, 0.0, 0.0 };
     std::atomic<bool> dirty{ true };
+    std::atomic<bool> resetPending{ false }; // consumed on the audio thread
 };
 
 struct ChannelStrip {

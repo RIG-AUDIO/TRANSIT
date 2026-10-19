@@ -4,15 +4,20 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include <condition_variable>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "Mixer.h"
 #include "Waveform.h"
 #include "Library.h"
+#include "LoadSchedule.h"
 #include "Recorder.h"
 #include "Analyze.h"
 #include "MidiMap.h"
@@ -23,13 +28,34 @@
 // the mix in the realtime callback, ships master peaks to the UI through a
 // lock-free FIFO. File decoding, MIDI routing and recording glue live here;
 // DSP lives in lean::*. File/recording I/O happens off the audio thread.
+//
+// Async file pipeline (review S5/S6): loadFile/indexFolder return at once;
+// a single worker thread decodes, builds the waveform payload and detects
+// BPM off the message thread. The worker never touches engine state — it
+// publishes into a result slot and wakes the message thread via
+// AsyncUpdater, which commits everything (waves/bpm/state/deck staging).
+// Newest-wins per deck via lean::LoadGate: superseded jobs drop at every
+// stage boundary and can never publish a stale result.
 class AudioEngine : public juce::AudioIODeviceCallback,
-                    private juce::MidiInputCallback {
+                    private juce::MidiInputCallback,
+                    private juce::AsyncUpdater {
 public:
     AudioEngine();
     ~AudioEngine() override;
 
-    bool loadFile(int deck, const juce::String& path, juce::String& error);
+    // Async: queues the job and returns immediately. Progress through
+    // deckState(); a completed load invokes onDeckReady on the message
+    // thread; a failure lands in deckError() with state Error (the deck
+    // keeps its previous track).
+    void loadFile(int deck, const juce::String& path);
+    int deckState(int deck) const {
+        return states[deck & 1].load(std::memory_order_seq_cst);
+    }
+    juce::String deckName(int deck) const { return names[deck & 1]; }
+    juce::String deckError(int deck) const { return errors[deck & 1]; }
+    // Message thread, invoked after a load commits (auto-play etc.).
+    std::function<void(int)> onDeckReady;
+
     bool hasFile(int deck) const { return fileLoaded[deck & 1]; }
 
     void setTempo(int deck, double t) { mixer.channel(deck & 1).deck.setTempo(t); }
@@ -146,14 +172,12 @@ public:
     }
     const lean::Waveform& getWaveform(int deck) const { return waves[deck & 1]; }
 
-    // Folder index: scan a folder into the SQLite library, full-text search it.
-    bool indexFolder(const juce::String& path, int& touched) {
-        ensureDb();
-        if (!library.isOpen())
-            return false;
-        touched = library.scanFolder(path.toStdString());
-        return touched >= 0;
-    }
+    // Folder index: async scan into the SQLite library (worker thread;
+    // Library serializes against message-thread searches). Progress via
+    // scanActive(), result count via scanCount() (-1 before any scan).
+    void indexFolder(const juce::String& path);
+    bool scanActive() const { return scanning.load(std::memory_order_seq_cst); }
+    int scanCount() const { return lastScanCount.load(std::memory_order_seq_cst); }
     std::vector<std::string> searchLibrary(const std::string& query) {
         ensureDb();
         return library.search(query);
@@ -229,9 +253,24 @@ public:
     juce::String auxPath(int aux) const { return fxRack.slotPath(aux); }
     bool auxHasEditor(int aux) const { return fxRack.hasEditor(aux); }
     void showAuxEditor(int aux) { fxRack.showEditor(aux); }
-    juce::StringArray scanAuxPlugins() { return fxRack.scanVst3(); }
+    // Async VST3 discovery (review S9): the directory walk runs on the
+    // worker; fxPlugins() returns the message-thread cache (empty until the
+    // first scan commits). refreshFxScan() is single-flight — at most one
+    // walk queued at a time.
+    void refreshFxScan();
+    juce::StringArray fxPlugins() const { return fxList; } // message thread
+    bool fxScanRunning() const {
+        return fxScanActive.load(std::memory_order_seq_cst);
+    }
     void pumpFx() { fxRack.pumpRetired(); }
-    void prepareFx(double rate) { fxRack.prepare(rate, 1024); }
+    void prepareFx(double rate) {
+        // Prepare plugins for the REAL device block size: a 1024 assumption
+        // breaks the hosting contract on devices with larger callbacks.
+        int block = 1024;
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+            block = juce::jmax(16, device->getCurrentBufferSizeSamples());
+        fxRack.prepare(rate, block);
+    }
     bool fxRateDirty() const { return fxRack.isRateDirty(); }
     void setSend(int deck, int aux, float v);
     void setAuxReturn(int aux, float v);
@@ -259,7 +298,7 @@ public:
                                          int numSamples,
                                          const juce::AudioIODeviceCallbackContext& context) override;
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
-    void audioDeviceStopped() override {}
+    void audioDeviceStopped() override { fxRack.setAudioRunning(false); }
 
 private:
     void ensureDb() {
@@ -274,12 +313,63 @@ private:
             dir.getChildFile("library.db").getFullPathName().toStdString(), error);
     }
 
+    // Worker-thread jobs (guarded by jobMutex) and finished results
+    // (guarded by resultMutex). Nothing in here is ever touched by the
+    // audio thread.
+    struct LoadJob {
+        enum class Kind { Load, Index, ScanFx };
+        Kind kind = Kind::Load;
+        int deck = 0;
+        uint64_t token = 0;
+        std::string path;
+        std::string fileName;
+    };
+    struct LoadResult {
+        uint64_t token = 0;
+        int deck = 0;
+        bool ok = false;
+        std::string error;
+        std::string fileName;
+        std::vector<float> stereo;
+        double rate = 44100.0;
+        double bpm = 0.0;
+        lean::Waveform wave;
+    };
+
+    void workerLoop();
+    void runLoadJob(const LoadJob& job);
+    void runIndexJob(const LoadJob& job);
+    void runScanFxJob();
+    void handleAsyncUpdate() override;
+
     juce::AudioDeviceManager deviceManager;
     lean::Mixer mixer;
     FxRack fxRack;
+    // Committed exclusively on the message thread (handleAsyncUpdate): paint
+    // and the UI timer run on the same thread, so a commit is observed as a
+    // whole old-or-new value — no lock, no torn payload. The worker only
+    // ever fills its local LoadResult.
     lean::Waveform waves[2];
     lean::Library library;
     lean::Recorder recorder;
+    lean::LoadGate gates[2];
+    std::atomic<int> states[2]{}; // lean::LoadState, worker writes Analyzing
+    juce::String names[2];  // message thread only (committed filenames)
+    juce::String errors[2]; // message thread only
+    std::mutex jobMutex;
+    std::condition_variable jobCv;
+    std::deque<LoadJob> jobs;
+    bool quitting = false; // guarded by jobMutex
+    std::mutex resultMutex;
+    LoadResult results[2];
+    bool resultReady[2] = { false, false }; // guarded by resultMutex
+    std::thread worker;
+    std::atomic<bool> scanning{ false };
+    std::atomic<int> lastScanCount{ -1 };
+    std::atomic<bool> fxScanActive{ false }; // single-flight ScanFx gate
+    juce::StringArray fxList;      // message thread only (committed cache)
+    juce::StringArray fxScanResult; // worker write; guarded by resultMutex
+    bool fxResultReady = false;     // guarded by resultMutex
     bool dbReady = false;
     bool fileLoaded[2] = { false, false };
     bool fourOuts = false;

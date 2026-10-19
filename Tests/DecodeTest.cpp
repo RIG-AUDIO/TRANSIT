@@ -4,6 +4,7 @@
 // through the real lean::decodeFile path (miniaudio), and checks rate,
 // length, and sample values. Also checks error paths.
 #include "Decode.h"
+#include "TempDir.h"
 
 #include <cmath>
 #include <cstdint>
@@ -61,8 +62,12 @@ int run() {
         putU16(wav, (uint16_t)R[fi]);
     }
 
-    const auto path =
-        (std::filesystem::temp_directory_path() / "transit_decode_test.wav").string();
+    const auto dir = testutil::privateTempDir("transit_decode_test");
+    if (dir.empty()) {
+        std::printf("DECODE_TEST FAIL: cannot create temp dir\n");
+        return 1;
+    }
+    const auto path = (dir / "transit_decode_test.wav").string();
     {
         FILE* f = fopen(path.c_str(), "wb");
         if (!f) {
@@ -112,7 +117,8 @@ int run() {
         return 1;
     }
     std::printf("DECODE_TEST PASS\n");
-    std::filesystem::remove(path);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
     return 0;
 }
 

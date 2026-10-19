@@ -85,6 +85,27 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Stage release app
+        if: matrix.compiler == 'gcc' && matrix.build_type == 'Release'
+        run: |
+          mkdir -p release-app
+          cp build/TRANSIT_artefacts/Release/TRANSIT release-app/TRANSIT
+          {
+            echo 'TRANSIT Linux CI build (gcc Release, branch feat/gui-waveform-stability).'
+            echo 'The artifact service strips file modes; make it executable first:'
+            echo '  chmod +x TRANSIT && ./TRANSIT'
+            echo 'Runtime libs (same set CI installs): libasound2, freetype,'
+            echo 'fontconfig, X11 stack, OpenGL, GTK3.'
+          } > release-app/README.txt
+
+      - name: Upload release app
+        if: matrix.compiler == 'gcc' && matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: transit-linux-x64-release
+          path: release-app/
+          if-no-files-found: error
+
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -93,4 +114,151 @@ jobs:
           path: |
             build/CMakeFiles/CMakeOutput.log
             build/CMakeFiles/CMakeError.log
+          if-no-files-found: ignore
+
+  sanitizers:
+    name: ASan+UBSan (JUCE-free tests)
+    needs: guard
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ clang \
+            libasound2-dev libjack-jackd2-dev \
+            libfreetype6-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            libgl1-mesa-dev libgtk-3-dev
+
+      # ASan+UBSan over the JUCE-free test targets only (configure still
+      # resolves JUCE, but no JUCE module TU is compiled or linked here).
+      # LeakSanitizer stays on: shutdown/leak hygiene is part of the gate.
+      - name: Configure (Debug + sanitizers)
+        run: >
+          cmake -S . -B build-asan -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build headless test targets
+        run: >
+          cmake --build build-asan --parallel --
+          NullRender DecodeTest MixerTest KeylockTest WaveformTest
+          MidiQueueTest LoadScheduleTest DeckLoadTest FxScanTest
+          LibraryTest MidiMapTest RecorderTest AnalyzeTest SyncTest
+
+      - name: Test under sanitizers
+        # fxrack_test is JUCE-linked and intentionally not built here, so
+        # exclude it; every other registered test is in the build list.
+        run: ctest --test-dir build-asan --output-on-failure -E "fxrack_test"
+
+      - name: Upload sanitizer logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-asan-ubsan
+          path: build-asan/Testing/Temporary/
+          if-no-files-found: ignore
+
+  tsan:
+    name: TSan (queue/lifecycle tests)
+    needs: guard
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ clang \
+            libasound2-dev libjack-jackd2-dev \
+            libfreetype6-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            libgl1-mesa-dev libgtk-3-dev
+
+      # Data-race gate for the concurrent structures (C3): SPSC queue,
+      # newest-wins lifecycle, Library mutex, mixer atomics. JUCE-free
+      # targets only — configure resolves JUCE but compiles no module TU.
+      - name: Configure (Debug + thread sanitizer)
+        run: >
+          cmake -S . -B build-tsan -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-sanitize-recover=all -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=thread -fno-sanitize-recover=all -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+
+      - name: Build concurrency test targets
+        run: >
+          cmake --build build-tsan --parallel --
+          MidiQueueTest LoadScheduleTest LibraryTest MixerTest
+
+      - name: Test under TSan
+        run: >
+          ctest --test-dir build-tsan --output-on-failure
+          -R "midiqueue_test|loadschedule_test|library_test|mixer_test"
+
+      - name: Upload TSan logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-tsan
+          path: build-tsan/Testing/Temporary/
+          if-no-files-found: ignore
+
+  gui-smoke:
+    name: GUI smoke (Xvfb screenshots)
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ \
+            libasound2-dev libjack-jackd2-dev \
+            libfreetype6-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            libgl1-mesa-dev libgtk-3-dev xvfb
+
+      - name: Configure (Release)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build GuiSmoke
+        run: cmake --build build --parallel --target GuiSmoke
+
+      # Real windowed peer under Xvfb with a serviced message loop;
+      # deterministic states + phase-1 frame validation (see
+      # docs/development/CI_VISUAL_TESTING.md). juce_add_console_app places
+      # the binary at <build>/<target>_artefacts/<CONFIG>/ (JUCE 9.0.1).
+      - name: Run GUI smoke harness
+        run: >
+          xvfb-run -a -s "-screen 0 2560x1440x24"
+          ./build/GuiSmoke_artefacts/Release/GuiSmoke
+          gui-smoke-artifacts
+
+      - name: Upload screenshot artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-smoke-shots
+          path: gui-smoke-artifacts/
           if-no-files-found: ignore

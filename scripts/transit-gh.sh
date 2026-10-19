@@ -13,7 +13,7 @@ bash "$here/verify-github-identity.sh"
 case "${1:-}" in
   auth)
     # auth status (read-only) is fine; everything else mutates identity.
-    if [ "${2:-}" != "status" ]; then
+    if [[ "${2:-}" != "status" ]]; then
       echo "transit-gh: refusing 'gh auth ${2:-<none>}' (only 'auth status' allowed)." >&2
       exit 1
     fi

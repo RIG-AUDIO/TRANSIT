@@ -70,26 +70,26 @@ public:
         if (channel < 1 || channel > 16 || cc < 0 || cc > 127)
             return;
         const int code = ((deck & 1) << 8) | ((int)target + 1);
-        cells[channel - 1][cc].store(code, std::memory_order_relaxed);
+        cells[channel - 1][cc].store(code, std::memory_order_seq_cst);
     }
 
     void clear(int channel, int cc) {
         if (channel < 1 || channel > 16 || cc < 0 || cc > 127)
             return;
-        cells[channel - 1][cc].store(-1, std::memory_order_relaxed);
+        cells[channel - 1][cc].store(-1, std::memory_order_seq_cst);
     }
 
     void clear() {
         for (auto& ch : cells)
             for (auto& cell : ch)
-                cell.store(-1, std::memory_order_relaxed);
+                cell.store(-1, std::memory_order_seq_cst);
     }
 
     // Returns packed code or -1. Decode with gridDeck()/gridTarget().
     int lookup(int channel, int cc) const {
         if (channel < 1 || channel > 16 || cc < 0 || cc > 127)
             return -1;
-        return cells[channel - 1][cc].load(std::memory_order_relaxed);
+        return cells[channel - 1][cc].load(std::memory_order_seq_cst);
     }
 
     static int gridDeck(int code) { return (code >> 8) & 1; }

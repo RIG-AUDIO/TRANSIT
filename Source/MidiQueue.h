@@ -22,31 +22,31 @@ struct MidiEvent {
 class MidiQueue {
 public:
     bool push(uint64_t frame, int channel, int cc, float value01) {
-        const uint64_t w = head.load(std::memory_order_relaxed);
-        const uint64_t t = tail.load(std::memory_order_acquire);
+        const uint64_t w = head.load(std::memory_order_seq_cst);
+        const uint64_t t = tail.load(std::memory_order_seq_cst);
         if (w - t >= kCap) {
-            dropped.fetch_add(1, std::memory_order_relaxed);
+            dropped.fetch_add(1, std::memory_order_seq_cst);
             return false;
         }
         buf[w & kMask] = MidiEvent{ frame, channel, cc, value01 };
-        head.store(w + 1, std::memory_order_release);
+        head.store(w + 1, std::memory_order_seq_cst);
         return true;
     }
 
     // Copy out up to maxOut events with frame <= uptoFrame. Returns count.
     int drain(uint64_t uptoFrame, MidiEvent* out, int maxOut) {
         int n = 0;
-        uint64_t t = tail.load(std::memory_order_relaxed);
-        const uint64_t w = head.load(std::memory_order_acquire);
+        uint64_t t = tail.load(std::memory_order_seq_cst);
+        const uint64_t w = head.load(std::memory_order_seq_cst);
         while (t < w && n < maxOut && buf[t & kMask].frame <= uptoFrame) {
             out[n++] = buf[t & kMask];
             ++t;
         }
-        tail.store(t, std::memory_order_release);
+        tail.store(t, std::memory_order_seq_cst);
         return n;
     }
 
-    long long droppedCount() const { return dropped.load(std::memory_order_relaxed); }
+    long long droppedCount() const { return dropped.load(std::memory_order_seq_cst); }
 
 private:
     static constexpr uint64_t kCap = 256;

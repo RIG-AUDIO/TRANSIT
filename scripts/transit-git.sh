@@ -13,7 +13,7 @@ repo="$(cd "$here/.." && pwd)"
 bash "$here/verify-github-identity.sh"
 
 # Refuse destructive push forms outright (no force-push policy).
-if [ "${1:-}" = "push" ]; then
+if [[ "${1:-}" = "push" ]]; then
   shift
   for arg in "$@"; do
     case "$arg" in

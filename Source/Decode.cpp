@@ -4,7 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstring>
+#include <string_view>
 
 // miniaudio: decode-only, no device I/O, no generation, no runtime linking.
 // Warning quarantine: third-party code is exempt from our /WX rule.
@@ -33,13 +33,13 @@
 namespace lean {
 namespace {
 
-bool hasExtension(const std::string& path, const char* ext) {
-    if (path.size() < strlen(ext))
+bool hasExtension(const std::string& path, std::string_view ext) {
+    if (path.size() < ext.size())
         return false;
-    std::string tail = path.substr(path.size() - strlen(ext));
+    std::string tail = path.substr(path.size() - ext.size());
     for (char& c : tail)
         c = (char)tolower((unsigned char)c);
-    return tail == ext;
+    return std::string_view(tail) == ext;
 }
 
 bool isAacContainer(const std::string& path) {

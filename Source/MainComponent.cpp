@@ -6,17 +6,28 @@
 
 #include "SettingsDialog.h"
 
+namespace {
+// G4: constant meter-bar fall in unit space (~18 dB/s at the 30 Hz tick).
+constexpr float kMeterFall = 0.01f;
+} // namespace
+
 MainComponent::WaveformView::WaveformView(AudioEngine& e, int d)
     : engine(e), deck(d) {}
 
 void MainComponent::WaveformView::zoomIn() {
-    if (zoomIdx > 0)
-        --zoomIdx;
+    const int idx = lean::clampZoomIndex(zoomIdx - 1);
+    if (idx != zoomIdx) {
+        zoomIdx = idx;
+        repaint(); // W4: zoom changes repaint explicitly, not via the timer
+    }
 }
 
 void MainComponent::WaveformView::zoomOut() {
-    if (zoomIdx < 7)
-        ++zoomIdx;
+    const int idx = lean::clampZoomIndex(zoomIdx + 1);
+    if (idx != zoomIdx) {
+        zoomIdx = idx;
+        repaint(); // W4
+    }
 }
 
 void MainComponent::WaveformView::mouseWheelMove(const juce::MouseEvent&,
@@ -28,42 +39,129 @@ void MainComponent::WaveformView::mouseWheelMove(const juce::MouseEvent&,
 }
 
 void MainComponent::WaveformView::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff0a0d10));
-    const auto& wave = engine.getWaveform(deck);
+    g.fillAll(DJLook::deep);
     const int W = getWidth();
     const int H = getHeight();
+    const int stripe = (H >= 48) ? kStripeHeight : 0;
+    const int mainH = H - stripe;
+    const auto& wave = engine.getWaveform(deck);
     const double len = engine.getLengthSeconds(deck);
-    if (wave.peaks.empty() || len <= 0.0 || W <= 0) {
+    if (wave.valid() && len > 0.0 && W > 0 && mainH > 0) {
+        // Scrolling window centered on the playhead (clamped to the track).
+        const double pos = engine.getPositionSeconds(deck);
+        const double span = lean::zoomSpanSeconds(zoomIdx, len);
+        double start = pos - span * 0.35; // playhead ~1/3 in, Traktor-style
+        start = juce::jlimit(0.0, std::max(0.0, len - span), start);
+        windowStart = start; // W3: record the exact window this frame draws
+        windowSpan = span;   // so click-seek uses the identical formula
+        for (int x = 0; x < W; ++x) {
+            const double t0 = start + span * (double)x / W;
+            const double t1 = start + span * (double)(x + 1) / W;
+            float mn = 0.0f, mx = 0.0f;
+            wave.aggregate(t0, t1, mn, mx); // W2: LOD min/max per pixel
+            mn = juce::jlimit(-1.0f, 1.0f, mn);
+            mx = juce::jlimit(-1.0f, 1.0f, mx);
+            const int mid = mainH / 2;
+            const int half = juce::jmax(1, mainH / 2 - 2);
+            const int yTop = mid - (int)((double)mx * (double)half);
+            const int yBot = mid - (int)((double)mn * (double)half);
+            const bool played = t0 < pos;
+            g.setColour(played ? DJLook::cyan.withAlpha(0.35f) : DJLook::cyan);
+            g.fillRect(x, juce::jmin(yTop, yBot), 1, juce::jmax(1, yBot - yTop));
+        }
+        const double posX = (pos - start) / span * (double)W;
+        g.setColour(DJLook::accent);
+        g.fillRect(juce::jlimit(0, W - 2, (int)posX), 0, 2, mainH);
+    } else {
         g.setColour(DJLook::dimInk);
-        g.drawText("Drop a track - double-click the library",
-                   getLocalBounds().reduced(8), juce::Justification::centred);
-        return;
+        juce::String text;
+        switch (static_cast<lean::LoadState>(engine.deckState(deck))) {
+            case lean::LoadState::Empty:
+                text = "Drop a track - double-click the library";
+                break;
+            case lean::LoadState::Loading: text = "Loading..."; break;
+            case lean::LoadState::Analyzing: text = "Analyzing..."; break;
+            case lean::LoadState::Ready:
+                text = "Drop a track - double-click the library";
+                break;
+            case lean::LoadState::Error: text = "Load failed"; break;
+        }
+        const int msgH = mainH > 0 ? mainH : H;
+        g.drawText(text, juce::Rectangle<int>(0, 0, W, msgH).reduced(8),
+                   juce::Justification::centred);
     }
-    // Scrolling window centered on the playhead (clamped to the track).
-    const double pos = engine.getPositionSeconds(deck);
-    double span = zooms[zoomIdx];
-    if (span <= 0.0 || span >= len)
-        span = len;
-    double start = pos - span * 0.35; // playhead ~1/3 in, Traktor-style
-    start = juce::jlimit(0.0, std::max(0.0, len - span), start);
-    const int n = (int)wave.peaks.size();
-    for (int x = 0; x < W; ++x) {
-        const double t = start + span * (double)x / W;
-        const int pi = juce::jlimit(0, n - 1, (int)(t / len * n));
-        const float peak = wave.peaks[(size_t)pi];
-        const int h = juce::jmin(H - 4, (int)(peak * (float)H));
-        const bool played = t < pos;
-        g.setColour(played ? DJLook::cyan.withAlpha(0.35f) : DJLook::cyan);
-        g.fillRect(x, (H - h) / 2, 1, h);
+    if (stripe > 0)
+        paintOverview(g, W, mainH, stripe, len,
+                      engine.getPositionSeconds(deck));
+}
+
+// W5: whole-track overview stripe rendered from the pyramid, with its own
+// playhead marker and the S5 load state while no waveform is committed yet.
+void MainComponent::WaveformView::paintOverview(juce::Graphics& g, int W,
+                                                int mainH, int stripeH,
+                                                double len, double pos) {
+    const juce::Rectangle<int> bar(0, mainH, W, stripeH);
+    g.setColour(DJLook::well);
+    g.fillRect(bar);
+    const auto& wave = engine.getWaveform(deck);
+    if (wave.valid() && len > 0.0 && W > 0) {
+        for (int x = 0; x < W; ++x) {
+            const double t0 = len * (double)x / W;
+            const double t1 = len * (double)(x + 1) / W;
+            float mn = 0.0f, mx = 0.0f;
+            wave.aggregate(t0, t1, mn, mx);
+            mn = juce::jlimit(-1.0f, 1.0f, mn);
+            mx = juce::jlimit(-1.0f, 1.0f, mx);
+            const int mid = mainH + stripeH / 2;
+            const int half = juce::jmax(1, stripeH / 2 - 1);
+            const int yTop = mid - (int)((double)mx * (double)half);
+            const int yBot = mid - (int)((double)mn * (double)half);
+            const bool played = t1 <= pos;
+            g.setColour(played ? DJLook::cyan.withAlpha(0.45f)
+                               : DJLook::cyan.withAlpha(0.75f));
+            g.fillRect(x, juce::jmin(yTop, yBot), 1, juce::jmax(1, yBot - yTop));
+        }
+        const int px = juce::jlimit(0, W - 1, (int)(pos / len * (double)W));
+        g.setColour(DJLook::accent);
+        g.fillRect(px, mainH, 2, stripeH);
+    } else {
+        juce::String text;
+        switch (static_cast<lean::LoadState>(engine.deckState(deck))) {
+            case lean::LoadState::Empty: break;
+            case lean::LoadState::Loading: text = "Loading..."; break;
+            case lean::LoadState::Analyzing: text = "Analyzing..."; break;
+            case lean::LoadState::Ready: break;
+            case lean::LoadState::Error: break;
+        }
+        if (text.isNotEmpty()) {
+            g.setColour(DJLook::dimInk);
+            g.drawText(text, bar.reduced(4, 0), juce::Justification::centred);
+        }
     }
-    const double posX = (pos - start) / span * W;
-    g.setColour(DJLook::accent);
-    g.fillRect(juce::jlimit(0, W - 2, (int)posX), 0, 2, H);
 }
 
 void MainComponent::WaveformView::mouseDown(const juce::MouseEvent& event) {
-    if (getWidth() > 0)
-        engine.seekFraction(deck, (double)event.x / getWidth());
+    const int W = getWidth();
+    const int H = getHeight();
+    const int stripe = (H >= 48) ? kStripeHeight : 0;
+    if (W <= 0)
+        return;
+    if (stripe > 0 && event.y >= H - stripe) {
+        // W5: overview stripe seeks across the whole track, zoom-independent.
+        engine.seekFraction(
+            deck, juce::jlimit(0.0, 1.0, (double)event.x / (double)W));
+        return;
+    }
+    const double len = engine.getLengthSeconds(deck);
+    if (len <= 0.0)
+        return;
+    // W3: map through the exact window paint last rendered; before the first
+    // paint fall back to the whole track.
+    const double start = windowSpan > 0.0 ? windowStart : 0.0;
+    const double span = windowSpan > 0.0 ? windowSpan : len;
+    const double t = juce::jlimit(
+        0.0, len, lean::seekTimeFromX(start, span, (double)event.x, (double)W));
+    engine.seekFraction(deck, t / len);
 }
 
 void MainComponent::CueHold::mouseDown(const juce::MouseEvent&) {
@@ -78,28 +176,59 @@ void MainComponent::CueHold::mouseUp(const juce::MouseEvent&) {
 
 void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w,
                                               int h, bool selected) {
-    // Model holds full paths; display filenames only. Selected rows get the
-    // same blue glow pill as the MIX tab.
+    // G6 columns: name | folder | size | date, all precomputed in the
+    // model; the metadata columns drop out on narrow lists instead of
+    // clipping. Selected rows keep the flat info-cyan pill (G2).
     if (selected) {
         auto area = juce::Rectangle<float>((float)w - 8.0f, (float)h - 4.0f)
                         .withPosition(4.0f, 2.0f);
-        juce::ColourGradient glow(DJLook::tabBlue, 0.0f, 0.0f,
-                                  DJLook::tabBlue.darker(0.4f), (float)w, 0.0f,
-                                  false);
-        g.setGradientFill(glow);
+        g.setColour(DJLook::cyan);
         g.fillRoundedRectangle(area, 4.0f);
-        g.setColour(juce::Colours::white);
+        g.setColour(DJLook::bg);
     } else {
         g.setColour(DJLook::ink);
     }
-    if (row >= 0 && row < files.size())
-        g.drawText(juce::File(files[row]).getFileName(), 12, 0, w - 20, h,
-                   juce::Justification::centredLeft, true);
+    if (row < 0 || row >= (int)rows.size())
+        return;
+    const Row& r = rows[(size_t)row];
+    const int dateW = w >= 480 ? 92 : 0;
+    const int sizeW = w >= 480 ? 78 : 0;
+    const int folderW = w >= 320 ? 96 : 0;
+    int x = 12;
+    const int nameW = w - 20 - dateW - sizeW - folderW;
+    if (nameW > 40) {
+        g.drawText(r.name, x, 0, nameW, h, juce::Justification::centredLeft,
+                   true);
+        x += nameW;
+    }
+    const auto metaColour = selected ? DJLook::bg : DJLook::dimInk;
+    if (folderW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.folder, x, 0, folderW, h, juce::Justification::centredLeft,
+                   true);
+        x += folderW;
+    }
+    if (sizeW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.size, x, 0, sizeW - 8, h,
+                   juce::Justification::centredRight, true);
+        x += sizeW;
+    }
+    if (dateW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.date, x, 0, dateW - 12, h,
+                   juce::Justification::centredRight, true);
+    }
 }
 
 void MainComponent::FileList::listBoxItemDoubleClicked(int row, const juce::MouseEvent&) {
     if (onDoubleClick)
         onDoubleClick(row);
+}
+
+void MainComponent::FileList::returnKeyPressed(int row) {
+    if (onDoubleClick)
+        onDoubleClick(row); // G6: Enter activates the selection too
 }
 
 MainComponent::MainComponent() : fileList("browser", &fileModel) {
@@ -129,6 +258,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         addAndMakeVisible(s.mid);
         addAndMakeVisible(s.high);
         addAndMakeVisible(s.fader);
+        addAndMakeVisible(s.stateChip);
         addAndMakeVisible(s.status);
         addAndMakeVisible(s.time);
         for (int k = 0; k < 4; ++k) {
@@ -221,8 +351,12 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         arm(s.mid, lean::MidiTarget::Mid);
         arm(s.high, lean::MidiTarget::High);
 
-        s.status.setText("Deck " + juce::String(names[d]) + ": empty",
-                         juce::dontSendNotification);
+        s.stateChip.setText("EMPTY", juce::dontSendNotification);
+        s.stateChip.setColour(juce::Label::textColourId, DJLook::dimInk);
+        s.stateChip.setFont(
+            juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
+        s.stateChip.setJustificationType(juce::Justification::centredLeft);
+        s.status.setText({}, juce::dontSendNotification);
         s.time.setText("--:-- / --:--", juce::dontSendNotification);
     }
 
@@ -292,8 +426,19 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     folderLabel.setText("No folder", juce::dontSendNotification);
     searchBox.setTextToShowWhenEmpty("Search indexed library...",
                                      juce::Colours::grey);
-    searchBox.onTextChange = [this] { refreshBrowserList(); };
+    // Debounced search: restart a short timer per keystroke so the SQLite
+    // query runs after typing pauses, not on every character (review S6).
+    searchDebounce.owner = this;
+    searchBox.onTextChange = [this] { searchDebounce.startTimer(150); };
     fileModel.onDoubleClick = [this](int row) { loadBrowserRow(row); };
+    // Auto-play and header refresh once an async load commits (review S5).
+    engine.onDeckReady = [this](int deck) {
+        engine.play(deck, true);
+        updateDeckHeader(deck);
+    };
+    // Warm the VST3 cache off the message thread before the FX menu opens
+    // (review S9).
+    engine.refreshFxScan();
 
     addAndMakeVisible(midiCombo);
     addAndMakeVisible(learnButton);
@@ -404,6 +549,12 @@ void MainComponent::applyEq(int deck) {
     engine.setEq(deck, s.low.getValue(), s.mid.getValue(), s.high.getValue());
 }
 
+void MainComponent::SearchDebounce::timerCallback() {
+    stopTimer(); // one-shot: fires once typing pauses
+    if (owner)
+        owner->refreshBrowserList();
+}
+
 void MainComponent::updateDeckHeader(int deck) {
     const double bpm = engine.getBpm(deck);
     juce::String text = deck == 0 ? "DECK A" : "DECK B";
@@ -455,15 +606,9 @@ void MainComponent::openFile(int deck) {
             const auto file = fc.getResult();
             if (file == juce::File())
                 return;
-            juce::String error;
-            if (engine.loadFile(deck, file.getFullPathName(), error)) {
-                engine.play(deck, true);
-                strips[deck].status.setText(file.getFileName(), juce::dontSendNotification);
-                updateDeckHeader(deck);
-            } else {
-                strips[deck].status.setText("Load failed: " + error,
-                                            juce::dontSendNotification);
-            }
+            // Async: the status line follows engine.deckState() from the
+            // 30 Hz timer (Loading -> filename or error).
+            engine.loadFile(deck, file.getFullPathName());
         });
 }
 
@@ -581,7 +726,10 @@ void MainComponent::pickAuxPlugin(int aux) {
         saveSettings();
     });
     menu.addSeparator();
-    const auto found = engine.scanAuxPlugins();
+    // Cached discovery (review S9): the walk already ran on the worker;
+    // kick a background refresh so newly installed plugins show next time.
+    const auto found = engine.fxPlugins();
+    engine.refreshFxScan();
     int id = 1;
     for (const auto& entry : found) {
         const auto display = entry.upToFirstOccurrenceOf("|", false, false);
@@ -602,8 +750,11 @@ void MainComponent::pickAuxPlugin(int aux) {
         if (++id > 200)
             break; // sanity cap on menu size
     }
-    if (found.isEmpty())
-        menu.addItem("(no VST3 found)", false, false, [] {});
+    if (found.isEmpty()) {
+        const bool scanning = engine.fxScanRunning();
+        menu.addItem(scanning ? "(scanning for VST3...)" : "(no VST3 found)",
+                     false, false, [] {});
+    }
     menu.showMenuAsync(juce::PopupMenu::Options().withParentComponent(this));
 }
 
@@ -616,14 +767,11 @@ void MainComponent::openFolder() {
             if (dir == juce::File())
                 return;
             browserDir = dir;
-            int touched = 0;
-            if (engine.indexFolder(dir.getFullPathName(), touched))
-                folderLabel.setText(
-                    dir.getFullPathName() + " - " + juce::String(touched)
-                        + " indexed",
-                    juce::dontSendNotification);
-            else
-                folderLabel.setText(dir.getFullPathName(), juce::dontSendNotification);
+            indexedFolderLabel = dir.getFullPathName();
+            engine.indexFolder(dir.getFullPathName()); // async scan
+            scanNoteActive = true;
+            folderLabel.setText(indexedFolderLabel + " - scanning...",
+                                juce::dontSendNotification);
             searchBox.setText("", juce::dontSendNotification);
             refreshBrowserList();
         });
@@ -644,23 +792,28 @@ void MainComponent::refreshBrowserList() {
         }
         paths.sort(true);
     }
-    fileModel.files = paths;
+    // G6: precompute display metadata once per refresh; paint is I/O-free.
+    fileModel.rows.clear();
+    fileModel.rows.reserve((size_t)paths.size());
+    for (int i = 0; i < paths.size(); ++i) {
+        const juce::File f(paths[i]);
+        FileList::Row row;
+        row.path = paths[i];
+        row.name = f.getFileName();
+        row.folder = f.getParentDirectory().getFileName();
+        row.size = juce::File::descriptionOfSizeInBytes(f.getSize());
+        row.date = f.getLastModificationTime().formatted("%Y-%m-%d");
+        fileModel.rows.push_back(std::move(row));
+    }
     fileList.updateContent();
 }
 
 void MainComponent::loadBrowserRow(int row) {
-    if (row < 0 || row >= fileModel.files.size())
+    if (row < 0 || row >= (int)fileModel.rows.size())
         return;
     const int deck = toB.getToggleState() ? 1 : 0;
-    const juce::File file(fileModel.files[row]);
-    juce::String error;
-    if (engine.loadFile(deck, file.getFullPathName(), error)) {
-        engine.play(deck, true);
-        strips[deck].status.setText(file.getFileName(), juce::dontSendNotification);
-        updateDeckHeader(deck);
-    } else {
-        strips[deck].status.setText("Load failed: " + error, juce::dontSendNotification);
-    }
+    const juce::File file(fileModel.rows[(size_t)row].path);
+    engine.loadFile(deck, file.getFullPathName()); // async; status via timer
 }
 
 juce::String MainComponent::formatTime(double seconds) const {
@@ -696,7 +849,9 @@ void MainComponent::dumpLayout() const {
 void MainComponent::timerCallback() {
     float masterPeak = 0.0f, chA = 0.0f, chB = 0.0f;
     engine.takePeaks(masterPeak, chA, chB);
-    meterShown = std::max(masterPeak, meterShown * 0.94f);
+    meterShown = std::max(DJLook::meterUnit(masterPeak),
+                          meterShown - kMeterFall);
+    meterHold.push(meterShown);
     topBar.pushMaster(masterPeak);
     engine.pumpFx();
     if (engine.fxRateDirty())
@@ -706,6 +861,7 @@ void MainComponent::timerCallback() {
     topBar.clockLabel.setText(juce::Time::getCurrentTime().formatted("%H:%M"),
                               juce::dontSendNotification);
     const float chPeak[2] = { chA, chB };
+    ++statusAnimTick; // G5: one animation step per tick, shared by both decks
     auto reflect = [](juce::Slider& sl, double v) {
         if (!sl.isMouseButtonDown() && std::abs(sl.getValue() - v) > 1e-4)
             sl.setValue(v, juce::dontSendNotification);
@@ -738,7 +894,8 @@ void MainComponent::timerCallback() {
         reflect(strips[d].low, lo);
         reflect(strips[d].mid, mi);
         reflect(strips[d].high, hi);
-        chanShown[d] = std::max(chPeak[d], chanShown[d] * 0.94f);
+        chanShown[d] = std::max(DJLook::meterUnit(chPeak[d]),
+                                chanShown[d] - kMeterFall);
         chanMeters[d].setLevel(chanShown[d]);
         strips[d].time.setText(
             formatTime(engine.getPositionSeconds(d)) + " / "
@@ -751,6 +908,45 @@ void MainComponent::timerCallback() {
         if (engine.isSync(d))
             strips[d].tempo.setValue(engine.getTempo(d),
                                      juce::dontSendNotification);
+        // Async load pipeline -> dedicated status row (review S5/G5): a
+        // state chip plus a payload label; each updates only when its text
+        // actually changes (the colour setter early-outs the same way).
+        juce::String chip = "EMPTY";
+        juce::Colour chipColour = DJLook::dimInk;
+        juce::String payload;
+        juce::Colour payloadColour = DJLook::dimInk;
+        switch (static_cast<lean::LoadState>(engine.deckState(d))) {
+            case lean::LoadState::Empty:
+                break;
+            case lean::LoadState::Loading:
+                chip = "LOADING";
+                for (int i = 0; i <= (statusAnimTick / 10) % 3; ++i)
+                    chip += '.';
+                chipColour = DJLook::cyan;
+                break;
+            case lean::LoadState::Analyzing:
+                chip = "ANALYZING";
+                chipColour = DJLook::cyan;
+                break;
+            case lean::LoadState::Ready:
+                chip = "READY";
+                chipColour = DJLook::accent;
+                payload = engine.deckName(d);
+                payloadColour = DJLook::ink;
+                break;
+            case lean::LoadState::Error:
+                chip = "ERROR";
+                chipColour = DJLook::alarm;
+                payload = engine.deckError(d);
+                payloadColour = DJLook::alarm;
+                break;
+        }
+        if (chip != strips[d].stateChip.getText())
+            strips[d].stateChip.setText(chip, juce::dontSendNotification);
+        strips[d].stateChip.setColour(juce::Label::textColourId, chipColour);
+        if (payload != strips[d].status.getText())
+            strips[d].status.setText(payload, juce::dontSendNotification);
+        strips[d].status.setColour(juce::Label::textColourId, payloadColour);
         // Live effective tempo: analyzed BPM follows the pitch fader, unless
         // the user hid it in Free mode (Sync always shows it).
         juce::String text = d == 0 ? "DECK A" : "DECK B";
@@ -770,7 +966,37 @@ void MainComponent::timerCallback() {
     reflect(topBar.masterKnob, engine.getMaster());
     reflect(topBar.phonesKnob, engine.getPhonesLevel());
     reflect(cueBlend, engine.getBlend());
-    repaint();
+    // Async folder scan feedback: finalize the label (and refresh an active
+    // search result) once the worker reports no queued index job left.
+    if (scanNoteActive && !engine.scanActive()) {
+        scanNoteActive = false;
+        const int n = engine.scanCount();
+        folderLabel.setText(n >= 0 ? indexedFolderLabel + " - "
+                                         + juce::String(n) + " indexed"
+                                   : indexedFolderLabel,
+                            juce::dontSendNotification);
+        refreshBrowserList();
+    }
+    // G8 (finish): targeted invalidation instead of one whole-window
+    // repaint — output-meter well every tick; each deck waveform only when
+    // a value it paints changed (load state or quantized playhead token:
+    // seek-while-paused still repaints, an idle loaded waveform stops
+    // re-rendering every tick; zoom changes repaint themselves, W4).
+    // Everything else in this callback already repaints itself: labels,
+    // sliders, tabs, channel VUs, the top-bar master strip.
+    for (int d = 0; d < 2; ++d) {
+        const int st = engine.deckState(d);
+        // Quantized change token, not a measurement: truncation at 1 ns is
+        // irrelevant and keeps the comparison on integers.
+        const int64_t tok = (int64_t)(engine.getPositionSeconds(d) * 1.0e9);
+        if (st != waveStateSeen[d] || tok != wavePosSeen[d]) {
+            waveStateSeen[d] = st;
+            wavePosSeen[d] = tok;
+            if (strips[d].wave)
+                strips[d].wave->repaint();
+        }
+    }
+    repaint(getLocalBounds().removeFromBottom(26));
 }
 
 void MainComponent::paint(juce::Graphics& g) {
@@ -779,17 +1005,24 @@ void MainComponent::paint(juce::Graphics& g) {
     g.setGradientFill(grad);
     g.fillAll();
     const auto meterArea = getLocalBounds().removeFromBottom(26).reduced(12, 7);
-    g.setColour(juce::Colour(0xff0a0d10));
+    g.setColour(DJLook::deep);
     g.fillRoundedRectangle(meterArea.toFloat(), 3.0f);
-    const float level = juce::jlimit(0.0f, 1.0f, meterShown);
+    const float level = juce::jlimit(0.0f, 1.0f, meterShown); // G4: dB-mapped
     if (level > 0.001f) {
         juce::ColourGradient mg(DJLook::cyan, (float)meterArea.getX(), 0.0f,
-                                level > 0.95f ? DJLook::alarm : DJLook::accent,
-                                (float)meterArea.getRight(), 0.0f, false);
-        mg.addColour(0.75, DJLook::accent);
+                                DJLook::alarm, (float)meterArea.getRight(), 0.0f,
+                                false);
+        mg.addColour(0.7, DJLook::accent);
         g.setGradientFill(mg);
         g.fillRoundedRectangle(
             meterArea.withWidth((int)((float)meterArea.getWidth() * level)).toFloat(), 3.0f);
+    }
+    if (meterHold.value > 0.004f) {
+        const int hx = meterArea.getX()
+                       + (int)(meterHold.value * (float)meterArea.getWidth());
+        g.setColour(DJLook::ink);
+        g.fillRect(juce::jmin(hx, meterArea.getRight() - 2), meterArea.getY(),
+                   2, meterArea.getHeight());
     }
 }
 
@@ -810,7 +1043,9 @@ void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
     s.cue.setBounds(buttons.removeFromLeft(52));
     buttons.removeFromLeft(5);
     s.key.setBounds(buttons.removeFromLeft(52));
-    s.status.setBounds(panel.removeFromTop(22));
+    auto statusRow = panel.removeFromTop(22);
+    s.stateChip.setBounds(statusRow.removeFromLeft(86));
+    s.status.setBounds(statusRow);
     auto timeRow = panel.removeFromTop(20);
     s.back.setBounds(timeRow.removeFromLeft(40));
     timeRow.removeFromLeft(6);

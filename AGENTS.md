@@ -54,3 +54,13 @@
 10. **Linux first.** Validate on Linux before considering a change done;
     CI (`.github/workflows/linux.yml`) is the authority on GCC/Clang ×
     Debug/Release.
+11. **Scoped commit authorization (GUI/waveform/stability assignment).**
+    Rule 2's approval requirement is hereby satisfied for one narrowly
+    defined scope: commits and pushes to the dedicated branch
+    `feat/gui-waveform-stability` in `RIG-AUDIO/TRANSIT`, made through the
+    guarded scripts, as part of the milestone/CI loop for this assignment
+    (human-authored assignment brief of 2026-10-18). This grant does **not**
+    extend to any other branch — pushes to `main`, force-pushes, auto-merge,
+    releases, or any repository outside `RIG-AUDIO/TRANSIT` remain
+    forbidden, and no guard script or CI check may be weakened. All other
+    rules above apply unchanged.

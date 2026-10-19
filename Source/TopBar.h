@@ -8,9 +8,9 @@
 
 #include "DJLook.h"
 
-// Top transport bar, VOIDX-style glass with neon edges: wordmark block,
-// view tabs (only MIX is a real view today), live master strip, setup,
-// clock, window keys. Dragging empty bar space moves the frameless window.
+// Top transport bar: RIG brand badge, wordmark block, view tabs (only MIX
+// is a real view today), live master strip, setup, clock, window keys.
+// Dragging empty bar space moves the frameless window.
 class TopBar : public juce::Component {
 public:
     TopBar();
@@ -53,4 +53,5 @@ private:
 
     juce::ComponentDragger dragger;
     MasterStrip strip;
+    std::unique_ptr<juce::Drawable> rigMark; // embedded SVG (BinaryData)
 };

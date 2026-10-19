@@ -74,27 +74,33 @@ void Biquad::setHighShelf(double fs, double freq, double gainDb) {
 
 void Eq3::set(double sampleRate, double lowDb, double midDb, double highDb) {
     this->fs.store(sampleRate > 0.0 ? sampleRate : 44100.0,
-                   std::memory_order_relaxed);
-    gains[0].store(clampDb(lowDb), std::memory_order_relaxed);
-    gains[1].store(clampDb(midDb), std::memory_order_relaxed);
-    gains[2].store(clampDb(highDb), std::memory_order_relaxed);
-    dirty.store(true, std::memory_order_release);
+                   std::memory_order_seq_cst);
+    gains[0].store(clampDb(lowDb), std::memory_order_seq_cst);
+    gains[1].store(clampDb(midDb), std::memory_order_seq_cst);
+    gains[2].store(clampDb(highDb), std::memory_order_seq_cst);
+    dirty.store(true, std::memory_order_seq_cst);
 }
 
 void Eq3::setRate(double sampleRate) {
     this->fs.store(sampleRate > 0.0 ? sampleRate : 44100.0,
-                   std::memory_order_relaxed);
-    dirty.store(true, std::memory_order_release);
+                   std::memory_order_seq_cst);
+    dirty.store(true, std::memory_order_seq_cst);
 }
 
 void Eq3::updateIfNeeded() {
-    if (!dirty.load(std::memory_order_acquire))
+    // Deferred state clear requested from the message thread (see reset()).
+    if (resetPending.exchange(false, std::memory_order_seq_cst)) {
+        for (auto& b : bands)
+            for (auto& q : b)
+                q.reset();
+    }
+    if (!dirty.load(std::memory_order_seq_cst))
         return;
-    dirty.store(false, std::memory_order_relaxed);
-    const double rate = fs.load(std::memory_order_relaxed);
-    const double lo = gains[0].load(std::memory_order_relaxed);
-    const double mi = gains[1].load(std::memory_order_relaxed);
-    const double hi = gains[2].load(std::memory_order_relaxed);
+    dirty.store(false, std::memory_order_seq_cst);
+    const double rate = fs.load(std::memory_order_seq_cst);
+    const double lo = gains[0].load(std::memory_order_seq_cst);
+    const double mi = gains[1].load(std::memory_order_seq_cst);
+    const double hi = gains[2].load(std::memory_order_seq_cst);
     for (int ch = 0; ch < 2; ++ch) {
         bands[0][ch].setLowShelf(rate, 250.0, lo);
         bands[1][ch].setPeaking(rate, 1000.0, 0.9, mi);
@@ -103,9 +109,9 @@ void Eq3::updateIfNeeded() {
 }
 
 void Eq3::reset() {
-    for (auto& b : bands)
-        for (auto& q : b)
-            q.reset();
+    // Never touch bands from the message thread: request it instead; the
+    // audio thread applies the clear before the next process() call.
+    resetPending.store(true, std::memory_order_seq_cst);
 }
 
 float Eq3::process(int channel, float x) {
@@ -115,7 +121,7 @@ float Eq3::process(int channel, float x) {
 }
 
 void Mixer::setOutputRate(double rate) {
-    outputRate.store(rate > 0.0 ? rate : 44100.0, std::memory_order_relaxed);
+    outputRate.store(rate > 0.0 ? rate : 44100.0, std::memory_order_seq_cst);
     for (auto& s : strips) {
         s.deck.setOutputRate(rate);
         s.eq.setRate(rate);
@@ -123,7 +129,7 @@ void Mixer::setOutputRate(double rate) {
 }
 
 void Mixer::setEq(int ch, double lowDb, double midDb, double highDb) {
-    strips[ch & 1].eq.set(outputRate.load(std::memory_order_relaxed), lowDb,
+    strips[ch & 1].eq.set(outputRate.load(std::memory_order_seq_cst), lowDb,
                           midDb, highDb);
 }
 
@@ -161,13 +167,15 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
     std::fill(left, left + numSamples, 0.0f);
     std::fill(right, right + numSamples, 0.0f);
     stripPeak[0] = stripPeak[1] = 0.0f; // per-block peaks for channel meters
+    if (auxHost)
+        auxHost->blockBoundary(); // once per block, even when all sends are silent
     const bool doPhones = phonesL && phonesR;
     if (doPhones) {
         std::fill(phonesL, phonesL + numSamples, 0.0f);
         std::fill(phonesR, phonesR + numSamples, 0.0f);
     }
 
-    const double rate = outputRate.load(std::memory_order_relaxed);
+    const double rate = outputRate.load(std::memory_order_seq_cst);
     const float coeff = smoothCoeff(rate);
 
     // Outer chunk loop keeps all scratch storage on the stack: no allocation
@@ -188,7 +196,7 @@ void Mixer::render(float* left, float* right, float* phonesL, float* phonesR,
             strip.eq.updateIfNeeded();
             const bool playing = strip.deck.isPlaying();
             const bool wantCue = doPhones
-                && strip.cue.load(std::memory_order_relaxed) && playing;
+                && strip.cue.load(std::memory_order_seq_cst) && playing;
             if (!playing && !wantCue)
                 continue;
             float tmpL[512], tmpR[512];

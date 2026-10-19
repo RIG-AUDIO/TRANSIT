@@ -128,7 +128,11 @@ set(TRANSIT_FIRSTPARTY_SOURCES
   Source/FxRack.cpp
   Tools/ListAudioTypes.cpp
   Tools/UiShot.cpp
-  Tools/FxProbe.cpp)
+  Tools/GuiSmoke.cpp
+  Tools/FxProbe.cpp
+  # JUCE-linked test target: strict flags attach per source file here
+  # (target-wide -Werror would also gate the JUCE module TUs inside it).
+  Tests/FxRackTest.cpp)
 
 set(TRANSIT_WARNING_FLAGS)
 if(MSVC)
@@ -181,12 +185,14 @@ juce_add_gui_app(TRANSIT
   COMPANY_NAME "RIG-AUDIO"
 )
 
-# Embedded UI typefaces (OFL, see Source/Assets/OFL.txt).
+# Embedded UI assets: typefaces (OFL, see Source/Assets/OFL.txt) and the
+# RIG brand mark (first-party, drawn in the top bar).
 juce_add_binary_data(TRANSITAssets
   NAMESPACE TransitFonts
   SOURCES
     Source/Assets/AdriaticaNext-Medium.ttf
     Source/Assets/AdriaticaNext-CondensedBold.ttf
+    Source/Assets/rig_mark.svg
 )
 
 target_sources(TRANSIT PRIVATE
@@ -273,6 +279,42 @@ add_executable(WaveformTest Tests/WaveformTest.cpp)
 target_include_directories(WaveformTest PRIVATE Source)
 add_test(NAME waveform_test COMMAND WaveformTest)
 
+add_executable(MidiQueueTest Tests/MidiQueueTest.cpp)
+target_include_directories(MidiQueueTest PRIVATE Source)
+add_test(NAME midiqueue_test COMMAND MidiQueueTest)
+
+add_executable(LoadScheduleTest Tests/LoadScheduleTest.cpp)
+target_include_directories(LoadScheduleTest PRIVATE Source)
+add_test(NAME loadschedule_test COMMAND LoadScheduleTest)
+
+add_executable(DeckLoadTest Tests/DeckLoadTest.cpp Source/Deck.cpp)
+target_include_directories(DeckLoadTest PRIVATE Source)
+target_link_libraries(DeckLoadTest PRIVATE signalsmith-stretch)
+add_test(NAME deckload_test COMMAND DeckLoadTest)
+
+add_executable(FxScanTest Tests/FxScanTest.cpp)
+target_include_directories(FxScanTest PRIVATE Source)
+add_test(NAME fxscan_test COMMAND FxScanTest)
+
+# C4/S1/S2 protocol gates: JUCE-linked (FxRack + stub plugin), so the strict
+# warnings attach per first-party source file, never target-wide (that would
+# gate JUCE's own module TUs compiled inside this target).
+juce_add_console_app(FxRackTest PRODUCT_NAME "FxRackTest")
+target_sources(FxRackTest PRIVATE
+  Tests/FxRackTest.cpp
+  Source/FxRack.cpp)
+target_include_directories(FxRackTest PRIVATE Source)
+target_link_libraries(FxRackTest PRIVATE
+  juce::juce_gui_extra
+  juce::juce_audio_processors
+  juce::juce_recommended_config_flags
+  signalsmith-stretch)
+target_compile_definitions(FxRackTest PRIVATE
+  JUCE_WEB_BROWSER=0
+  JUCE_USE_CURL=0
+  JUCE_PLUGINHOST_VST3=1)
+add_test(NAME fxrack_test COMMAND FxRackTest)
+
 add_executable(LibraryTest Tests/LibraryTest.cpp Source/Library.cpp)
 target_include_directories(LibraryTest PRIVATE Source)
 target_link_libraries(LibraryTest PRIVATE sqlite3)
@@ -357,6 +399,54 @@ target_compile_definitions(UiShot PRIVATE
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0)
 
+# CI gate (review C2): deterministic GUI screenshot/smoke harness run under
+# Xvfb by the gui-smoke job; see docs/development/CI_VISUAL_TESTING.md.
+juce_add_console_app(GuiSmoke)
+target_sources(GuiSmoke PRIVATE
+  Tools/GuiSmoke.cpp
+  Source/MainComponent.cpp
+  Source/SettingsDialog.cpp
+  Source/TopBar.cpp
+  Source/AudioEngine.cpp
+  Source/Deck.cpp
+  Source/Decode.cpp
+  Source/Mixer.cpp
+  Source/Library.cpp
+  Source/Recorder.cpp
+  Source/DJLook.cpp
+  Source/FxRack.cpp)
+target_include_directories(GuiSmoke PRIVATE Source)
+target_include_directories(GuiSmoke SYSTEM PRIVATE ${miniaudio_SOURCE_DIR})
+target_link_libraries(GuiSmoke PRIVATE
+  juce::juce_gui_extra
+  juce::juce_audio_utils
+  juce::juce_audio_formats
+  juce::juce_audio_processors
+  juce::juce_dsp
+  juce::juce_recommended_config_flags
+  juce::juce_recommended_lto_flags
+  juce::juce_recommended_warning_flags
+  signalsmith-stretch
+  sqlite3
+  TRANSITAssets)
+if(WIN32)
+  target_link_libraries(GuiSmoke PRIVATE mfplat mfreadwrite mfuuid)
+  target_compile_definitions(GuiSmoke PRIVATE JUCE_ASIO=1)
+endif()
+target_compile_definitions(GuiSmoke PRIVATE
+  JUCE_MODAL_LOOPS_PERMITTED=1
+  JUCE_PLUGINHOST_VST3=1
+  JUCE_WEB_BROWSER=0
+  JUCE_USE_CURL=0)
+# seedX11Atoms() interns JUCE's only-if-exists WM atoms on bare X servers
+# (see the comment in Tools/GuiSmoke.cpp); needs libX11 directly.
+# -rdynamic lets the harness's X-error backtraces resolve symbol names.
+if(UNIX AND NOT APPLE)
+  find_package(X11 REQUIRED)
+  target_link_libraries(GuiSmoke PRIVATE X11::X11)
+  target_link_options(GuiSmoke PRIVATE -rdynamic)
+endif()
+
 # Dev probe: end-to-end VST3 load/process/unload on this machine.
 juce_add_console_app(FxProbe)
 target_sources(FxProbe PRIVATE
@@ -384,8 +474,9 @@ target_compile_definitions(FxProbe PRIVATE
 # sources internally; on those targets -Werror is attached per first-party
 # source file (above) so upstream sources are never gated by it.
 # ---------------------------------------------------------------------------
-foreach(t NullRender DecodeTest MixerTest KeylockTest WaveformTest LibraryTest
-          MidiMapTest RecorderTest AnalyzeTest SyncTest DspBench)
+foreach(t NullRender DecodeTest MixerTest KeylockTest WaveformTest MidiQueueTest
+          LoadScheduleTest DeckLoadTest FxScanTest LibraryTest MidiMapTest
+          RecorderTest AnalyzeTest SyncTest DspBench)
   if(MSVC)
     target_compile_options(${t} PRIVATE /WX)
   else()
@@ -393,7 +484,7 @@ foreach(t NullRender DecodeTest MixerTest KeylockTest WaveformTest LibraryTest
   endif()
 endforeach()
 
-foreach(t TRANSIT ListAudioTypes UiShot FxProbe)
+foreach(t TRANSIT ListAudioTypes UiShot GuiSmoke FxProbe FxRackTest)
   if(MSVC)
     target_compile_options(${t} PRIVATE /WX)
   endif()

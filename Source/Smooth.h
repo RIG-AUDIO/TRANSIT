@@ -16,13 +16,13 @@ public:
     SmoothFloat() = default;
     explicit SmoothFloat(float v) : target(v), cur(v) {}
 
-    void setTarget(float v) { target.store(v, std::memory_order_relaxed); }
+    void setTarget(float v) { target.store(v, std::memory_order_seq_cst); }
     void snap(float v) {
-        target.store(v, std::memory_order_relaxed);
+        target.store(v, std::memory_order_seq_cst);
         cur = v;
     }
     float next(float coeff) {
-        const float t = target.load(std::memory_order_relaxed);
+        const float t = target.load(std::memory_order_seq_cst);
         cur += (t - cur) * coeff;
         if (std::abs(t - cur) < 1e-6f)
             cur = t;
@@ -30,7 +30,7 @@ public:
     }
     float current() const { return cur; }
     // Last commanded value; the race-free read for other threads.
-    float targetValue() const { return target.load(std::memory_order_relaxed); }
+    float targetValue() const { return target.load(std::memory_order_seq_cst); }
 
 private:
     std::atomic<float> target{ 0.0f };
