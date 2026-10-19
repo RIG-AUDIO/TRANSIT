@@ -43,7 +43,7 @@ void writeClickTrack(const std::filesystem::path& path, int rate, double bpm,
         bytes.push_back((unsigned char)(v & 0xFFu));
         bytes.push_back((unsigned char)((v >> 8) & 0xFFu));
     };
-    auto putU32 = [&bytes](unsigned int v) {
+    auto putU32 = [&](unsigned int v) {
         putU16(v & 0xFFFFu);
         putU16((v >> 16) & 0xFFFFu);
     };
