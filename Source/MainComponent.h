@@ -75,7 +75,7 @@ private:
             repaint();
         }
         void paint(juce::Graphics& g) override {
-            g.fillAll(juce::Colour(0xff161a20));
+            g.fillAll(DJLook::well);
             const float h = juce::jlimit(0.0f, 1.0f, level) * (float)getHeight();
             if (h <= 0.0f)
                 return;

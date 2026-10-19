@@ -8,14 +8,13 @@
 
 const juce::Colour DJLook::bg(0xff14171c);
 const juce::Colour DJLook::panel(0xff1d2229);
+const juce::Colour DJLook::deep(0xff0a0d10);
+const juce::Colour DJLook::well(0xff161a20);
 const juce::Colour DJLook::accent(0xffffb454);
 const juce::Colour DJLook::cyan(0xff5fd4ff);
 const juce::Colour DJLook::alarm(0xffff5252);
 const juce::Colour DJLook::ink(0xffe8ecf1);
 const juce::Colour DJLook::dimInk(0xff8b95a3);
-const juce::Colour DJLook::tabBlue(0xff2f7bff);
-const juce::Colour DJLook::neonCyan(0xff35e0ff);
-const juce::Colour DJLook::neonPink(0xffff3fd4);
 
 void DJLook::drawGlassPanel(juce::Graphics& g, juce::Rectangle<float> area,
                             float radius) {
@@ -30,16 +29,11 @@ void DJLook::drawGlassPanel(juce::Graphics& g, juce::Rectangle<float> area,
                area.getY() + 1.0f, 1.0f);
 }
 
-void DJLook::drawNeonEdge(juce::Graphics& g, juce::Rectangle<float> area,
-                          float radius) {
-    juce::ColourGradient edge(neonCyan, area.getX(), area.getCentreY(), neonPink,
-                              area.getRight(), area.getCentreY(), false);
-    g.setGradientFill(edge);
-    g.setOpacity(0.22f);
-    g.drawRoundedRectangle(area.expanded(1.0f), radius + 1.0f, 3.5f);
-    g.setOpacity(0.9f);
-    g.drawRoundedRectangle(area, radius, 1.5f);
-    g.setOpacity(1.0f);
+void DJLook::drawLitBorder(juce::Graphics& g, juce::Rectangle<float> area,
+                           float radius) {
+    // Thin lit hairline: structure without neon glow (review G2).
+    g.setColour(ink.withAlpha(0.20f));
+    g.drawRoundedRectangle(area, radius, 1.0f);
 }
 
 namespace {
@@ -81,7 +75,7 @@ DJLook::DJLook() {
     setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
     setColour(juce::ComboBox::buttonColourId, dimInk);
     setColour(juce::ComboBox::focusedOutlineColourId, accent);
-    setColour(juce::TextButton::textColourOnId, juce::Colour(0xff14171c));
+    setColour(juce::TextButton::textColourOnId, bg);
     setColour(juce::TextButton::textColourOffId, ink);
     setColour(juce::ScrollBar::thumbColourId, dimInk.withAlpha(0.6f));
     setColour(juce::ScrollBar::backgroundColourId, juce::Colours::transparentBlack);
@@ -177,20 +171,14 @@ void DJLook::drawButtonBackground(juce::Graphics& g, juce::Button& button,
                                   const juce::Colour& /*backgroundColour*/,
                                   bool highlighted, bool down) {
     const auto& props = button.getProperties();
-    // View tabs (top bar): transparent at rest, blue glow pill when active,
-    // red glow pill for REC while recording.
+    // View tabs (top bar): transparent at rest, flat info-cyan pill when
+    // active, alarm-red pill for REC while recording (review G2: no glow).
     if (props.contains("tab")) {
         const bool on = button.getToggleState();
         auto area = button.getLocalBounds().toFloat().reduced(2.0f, 5.0f);
         const bool isRec = props.contains("rec");
         if (on) {
-            juce::ColourGradient glow(
-                isRec ? alarm : tabBlue, area.getX(), area.getCentreY(),
-                isRec ? alarm.darker(0.4f) : tabBlue.darker(0.4f),
-                area.getRight(), area.getCentreY(), false);
-            g.setGradientFill(glow);
-            g.fillRoundedRectangle(area.expanded(3.0f), 5.0f);
-            g.setGradientFill(glow);
+            g.setColour(isRec ? alarm : cyan);
             g.fillRoundedRectangle(area, 5.0f);
         } else if (highlighted && button.isEnabled()) {
             g.setColour(juce::Colour(0xff1c2230));

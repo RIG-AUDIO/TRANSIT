@@ -15,7 +15,7 @@ void TopBar::MasterStrip::paint(juce::Graphics& g) {
     const int H = getHeight();
     if (W <= 0 || H <= 0)
         return;
-    g.fillAll(juce::Colour(0xff0a0d10));
+    g.fillAll(DJLook::deep);
     const float bw = (float)W / bins;
     for (int i = 0; i < bins; ++i) {
         const float v =
@@ -24,8 +24,8 @@ void TopBar::MasterStrip::paint(juce::Graphics& g) {
             continue;
         const float h = v * (float)(H - 4);
         const float x = (float)i * bw;
-        g.setColour(DJLook::neonCyan.interpolatedWith(DJLook::neonPink,
-                                                      (float)i / bins));
+        // Master meter: information cyan, alarm red when near clip (G2).
+        g.setColour(v > 0.98f ? DJLook::alarm : DJLook::cyan);
         g.fillRect(x, (float)(H - 2) - h, juce::jmax(1.0f, bw - 1.0f), h);
     }
 }
@@ -42,8 +42,8 @@ TopBar::TopBar() {
     for (auto* t : tabs) {
         addAndMakeVisible(t);
         t->getProperties().set("tab", 1);
-        t->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff9aa4b2));
-        t->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+        // On-state text stays DJLook's dark-on-fill default (flat pills).
+        t->setColour(juce::TextButton::textColourOffId, DJLook::dimInk);
         t->setRadioGroupId(400);
     }
     mixTab.setToggleState(true, juce::dontSendNotification);
@@ -106,7 +106,7 @@ void TopBar::mouseDrag(const juce::MouseEvent& event) {
 void TopBar::paint(juce::Graphics& g) {
     const auto area = getLocalBounds().toFloat().reduced(6.0f, 6.0f);
     DJLook::drawGlassPanel(g, area, 4.0f);
-    DJLook::drawNeonEdge(g, area, 4.0f);
+    DJLook::drawLitBorder(g, area, 4.0f);
 
     // RIG brand badge (review G1): embedded vector mark in the 56 px emblem
     // slot, drawn at the historic optical centre (34, 32).

@@ -34,7 +34,7 @@ void MainComponent::WaveformView::mouseWheelMove(const juce::MouseEvent&,
 }
 
 void MainComponent::WaveformView::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colour(0xff0a0d10));
+    g.fillAll(DJLook::deep);
     const int W = getWidth();
     const int H = getHeight();
     const int stripe = (H >= 48) ? kStripeHeight : 0;
@@ -96,7 +96,7 @@ void MainComponent::WaveformView::paintOverview(juce::Graphics& g, int W,
                                                 int mainH, int stripeH,
                                                 double len, double pos) {
     const juce::Rectangle<int> bar(0, mainH, W, stripeH);
-    g.setColour(juce::Colour(0xff12161b));
+    g.setColour(DJLook::well);
     g.fillRect(bar);
     const auto& wave = engine.getWaveform(deck);
     if (wave.valid() && len > 0.0 && W > 0) {
@@ -172,16 +172,13 @@ void MainComponent::CueHold::mouseUp(const juce::MouseEvent&) {
 void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w,
                                               int h, bool selected) {
     // Model holds full paths; display filenames only. Selected rows get the
-    // same blue glow pill as the MIX tab.
+    // same flat info-cyan pill as the MIX tab (G2).
     if (selected) {
         auto area = juce::Rectangle<float>((float)w - 8.0f, (float)h - 4.0f)
                         .withPosition(4.0f, 2.0f);
-        juce::ColourGradient glow(DJLook::tabBlue, 0.0f, 0.0f,
-                                  DJLook::tabBlue.darker(0.4f), (float)w, 0.0f,
-                                  false);
-        g.setGradientFill(glow);
+        g.setColour(DJLook::cyan);
         g.fillRoundedRectangle(area, 4.0f);
-        g.setColour(juce::Colours::white);
+        g.setColour(DJLook::bg);
     } else {
         g.setColour(DJLook::ink);
     }
@@ -906,7 +903,7 @@ void MainComponent::paint(juce::Graphics& g) {
     g.setGradientFill(grad);
     g.fillAll();
     const auto meterArea = getLocalBounds().removeFromBottom(26).reduced(12, 7);
-    g.setColour(juce::Colour(0xff0a0d10));
+    g.setColour(DJLook::deep);
     g.fillRoundedRectangle(meterArea.toFloat(), 3.0f);
     const float level = juce::jlimit(0.0f, 1.0f, meterShown);
     if (level > 0.001f) {
