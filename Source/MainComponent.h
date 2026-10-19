@@ -44,6 +44,10 @@ public:
         chanShown[1] = chB;
         chanMeters[0].setLevel(chA);
         chanMeters[1].setLevel(chB);
+        // Top-bar master history ring: one full ramp sweep (96 = MasterStrip
+        // depth) of raw linear peaks, incl. a clipping tail.
+        for (int i = 0; i < 96; ++i)
+            topBar.pushMaster(0.30f + 0.0074f * (float)i);
         repaint(getLocalBounds().removeFromBottom(26));
     }
 
@@ -158,7 +162,8 @@ private:
         juce::TextButton zoomInBtn{ "+" };
         juce::TextButton zoomOutBtn{ "-" };
         juce::Label knobCaps[4];
-        juce::Label status;
+        juce::Label stateChip; // G5: dedicated state word (EMPTY/…/ERROR)
+        juce::Label status;    // G5 payload: filename or error text
         juce::Label time;
         std::unique_ptr<WaveformView> wave;
     };
@@ -258,4 +263,5 @@ private:
     DJLook look;
     float meterShown = 0.0f; // G4: dB-mapped unit (0..1)
     MeterHold meterHold;
+    int statusAnimTick = 0; // G5: drives the LOADING... dot animation
 };

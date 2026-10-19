@@ -421,11 +421,22 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   levels (0.72 / 0.55 / 0.88) before the pass-2 snapshots — real
   decay/hold behaviour still needs human verification with an audio stream.
 
-### G5 — status label doubles as filename/error/state display  (M4)
+### G5 — status label doubles as filename/error/state display  (implemented in M4)
 - `Source/MainComponent.cpp:224,461-464,657-662`.
 - **Fix:** dedicated transport/status row per deck with the S5 state machine
   (Empty / Loading / Analyzing / Ready / Error), error text styled in alarm
   red, loading state visualized (also feeds W5 progress).
+- **Fix (implemented in M4):** the row splits into a bold 11 px state chip
+  (left, 86 px) and a payload label (right): `EMPTY` dimInk /
+  `LOADING..` cyan with a 3 Hz animated dot ellipsis / `ANALYZING` cyan /
+  `READY` amber with the filename in ink / `ERROR` alarm with the engine
+  error text also in alarm. Text and colour update only when changed, so
+  the 30 Hz tick stays cheap. The harness gained a deterministic `error`
+  pass (nonexistent path on deck A, poll for `Error`, snapshot ×4
+  viewports — deck B stays `EMPTY` in the same frame), so
+  Empty/Ready/Error chips are verified in PNGs (28 shots now);
+  `Loading..`/`Analyzing` are too transient to capture deterministically —
+  like G4's live decay/hold, that stays a human-verification residual.
 
 ### G6 — browser rows show filename only  (M5)
 - `Source/MainComponent.cpp:95-97`.

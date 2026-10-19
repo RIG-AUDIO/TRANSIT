@@ -341,6 +341,19 @@ bool waitReady(MainComponent& content, int deck) {
     return false;
 }
 
+// G5: mirror of waitReady for the deterministic error-state snapshots.
+bool waitError(MainComponent& content, int deck) {
+    int waited = 0;
+    while (waited < kLoadTimeoutMs) {
+        if (content.harnessDeckState(deck) == kErrorState)
+            return true;
+        pump(50);
+        waited += 50;
+    }
+    fail("error timeout on deck " + juce::String(deck));
+    return false;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -384,6 +397,17 @@ int main(int argc, char** argv) {
     for (const Viewport& vp : kViewports) {
         window.useViewport(vp.w, vp.h);
         snapshot(content, outDir, "empty", vp.w, vp.h);
+    }
+
+    // G5: deterministic error state — deck A fails on a nonexistent path,
+    // deck B stays empty, so one frame shows both chips.
+    content.harnessLoadFile(
+        0, outDir.getChildFile("missing.wav").getFullPathName());
+    if (!waitError(content, 0))
+        return 1;
+    for (const Viewport& vp : kViewports) {
+        window.useViewport(vp.w, vp.h);
+        snapshot(content, outDir, "error", vp.w, vp.h);
     }
 
     content.harnessLoadFile(0, toneA.getFullPathName());

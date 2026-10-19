@@ -224,6 +224,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         addAndMakeVisible(s.mid);
         addAndMakeVisible(s.high);
         addAndMakeVisible(s.fader);
+        addAndMakeVisible(s.stateChip);
         addAndMakeVisible(s.status);
         addAndMakeVisible(s.time);
         for (int k = 0; k < 4; ++k) {
@@ -316,8 +317,12 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         arm(s.mid, lean::MidiTarget::Mid);
         arm(s.high, lean::MidiTarget::High);
 
-        s.status.setText("Deck " + juce::String(names[d]) + ": empty",
-                         juce::dontSendNotification);
+        s.stateChip.setText("EMPTY", juce::dontSendNotification);
+        s.stateChip.setColour(juce::Label::textColourId, DJLook::dimInk);
+        s.stateChip.setFont(
+            juce::Font(juce::FontOptions{}.withHeight(11.0f)).boldened());
+        s.stateChip.setJustificationType(juce::Justification::centredLeft);
+        s.status.setText({}, juce::dontSendNotification);
         s.time.setText("--:-- / --:--", juce::dontSendNotification);
     }
 
@@ -810,6 +815,7 @@ void MainComponent::timerCallback() {
     topBar.clockLabel.setText(juce::Time::getCurrentTime().formatted("%H:%M"),
                               juce::dontSendNotification);
     const float chPeak[2] = { chA, chB };
+    ++statusAnimTick; // G5: one animation step per tick, shared by both decks
     auto reflect = [](juce::Slider& sl, double v) {
         if (!sl.isMouseButtonDown() && std::abs(sl.getValue() - v) > 1e-4)
             sl.setValue(v, juce::dontSendNotification);
@@ -856,22 +862,45 @@ void MainComponent::timerCallback() {
         if (engine.isSync(d))
             strips[d].tempo.setValue(engine.getTempo(d),
                                      juce::dontSendNotification);
-        // Async load pipeline -> status line (review S5): text only changes
-        // when the state or its payload actually changes.
-        juce::String statusText;
+        // Async load pipeline -> dedicated status row (review S5/G5): a
+        // state chip plus a payload label; each updates only when its text
+        // actually changes (the colour setter early-outs the same way).
+        juce::String chip = "EMPTY";
+        juce::Colour chipColour = DJLook::dimInk;
+        juce::String payload;
+        juce::Colour payloadColour = DJLook::dimInk;
         switch (static_cast<lean::LoadState>(engine.deckState(d))) {
             case lean::LoadState::Empty:
-                statusText = "Deck " + juce::String(d == 0 ? "A" : "B") + ": empty";
                 break;
-            case lean::LoadState::Loading: statusText = "Loading..."; break;
-            case lean::LoadState::Analyzing: statusText = "Analyzing..."; break;
-            case lean::LoadState::Ready: statusText = engine.deckName(d); break;
+            case lean::LoadState::Loading:
+                chip = "LOADING";
+                for (int i = 0; i <= (statusAnimTick / 10) % 3; ++i)
+                    chip += '.';
+                chipColour = DJLook::cyan;
+                break;
+            case lean::LoadState::Analyzing:
+                chip = "ANALYZING";
+                chipColour = DJLook::cyan;
+                break;
+            case lean::LoadState::Ready:
+                chip = "READY";
+                chipColour = DJLook::accent;
+                payload = engine.deckName(d);
+                payloadColour = DJLook::ink;
+                break;
             case lean::LoadState::Error:
-                statusText = "Load failed: " + engine.deckError(d);
+                chip = "ERROR";
+                chipColour = DJLook::alarm;
+                payload = engine.deckError(d);
+                payloadColour = DJLook::alarm;
                 break;
         }
-        if (statusText != strips[d].status.getText())
-            strips[d].status.setText(statusText, juce::dontSendNotification);
+        if (chip != strips[d].stateChip.getText())
+            strips[d].stateChip.setText(chip, juce::dontSendNotification);
+        strips[d].stateChip.setColour(juce::Label::textColourId, chipColour);
+        if (payload != strips[d].status.getText())
+            strips[d].status.setText(payload, juce::dontSendNotification);
+        strips[d].status.setColour(juce::Label::textColourId, payloadColour);
         // Live effective tempo: analyzed BPM follows the pitch fader, unless
         // the user hid it in Free mode (Sync always shows it).
         juce::String text = d == 0 ? "DECK A" : "DECK B";
@@ -956,7 +985,9 @@ void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
     s.cue.setBounds(buttons.removeFromLeft(52));
     buttons.removeFromLeft(5);
     s.key.setBounds(buttons.removeFromLeft(52));
-    s.status.setBounds(panel.removeFromTop(22));
+    auto statusRow = panel.removeFromTop(22);
+    s.stateChip.setBounds(statusRow.removeFromLeft(86));
+    s.status.setBounds(statusRow);
     auto timeRow = panel.removeFromTop(20);
     s.back.setBounds(timeRow.removeFromLeft(40));
     timeRow.removeFromLeft(6);

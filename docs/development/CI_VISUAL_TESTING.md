@@ -75,12 +75,16 @@ plus `WaveformView::setZoomIndex`; behavior stays in the engine/view classes.
 3. **States × viewports.** Viewports: `1100×824`, `1280×800`, `1440×900`,
    `1920×1080`. States:
    - `empty` — before any file is loaded (pass 1),
+   - `error` — deck A failed on a nonexistent path while deck B is still
+     empty (G5 state chips: alarm-red `ERROR` + dim `EMPTY` in one frame),
    - `loaded` — both decks `Ready` (poll `harnessDeckState`, 30 s timeout),
    - `zoom4s` — waveform zoom index 0 (4 s window),
    - `whole` — zoom index 7 (whole track),
    - `playing` — transport engaged (see no-audio-device note above),
    - `fx` — FX page shown (`showBrowser(false)`).
-   24 PNGs total, named `<state>-<w>x<h>.png`.
+   28 PNGs total, named `<state>-<w>x<h>.png`. Meter levels in the
+   pass-2 frames come from the `harnessSetMeters` seam (G4), since CI
+   has no audio device.
 4. **Phase-1 validation per frame** (any failure exits non-zero and fails
    the job):
    - file exists and is non-empty,
