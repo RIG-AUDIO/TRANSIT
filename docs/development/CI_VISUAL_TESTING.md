@@ -94,7 +94,11 @@ for future contributors the job reproduces as:
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target GuiSmoke
-xvfb-run -a -s "-screen 0 2560x1440x24" ./build/GuiSmoke gui-smoke-artifacts
+xvfb-run -a -s "-screen 0 2560x1440x24" \
+  ./build/GuiSmoke_artefacts/Release/GuiSmoke gui-smoke-artifacts
 ```
+
+(`juce_add_console_app` places binaries under
+`<build>/<target>_artefacts/<CONFIG>/`.)
 
 Exit code 0 and a final `GUI_SMOKE ok` line mean all frames passed phase 1.

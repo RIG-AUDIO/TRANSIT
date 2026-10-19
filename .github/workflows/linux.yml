@@ -226,11 +226,13 @@ jobs:
 
       # Real windowed peer under Xvfb with a serviced message loop;
       # deterministic states + phase-1 frame validation (see
-      # docs/development/CI_VISUAL_TESTING.md).
+      # docs/development/CI_VISUAL_TESTING.md). juce_add_console_app places
+      # the binary at <build>/<target>_artefacts/<CONFIG>/ (JUCE 9.0.1).
       - name: Run GUI smoke harness
         run: >
           xvfb-run -a -s "-screen 0 2560x1440x24"
-          ./build/GuiSmoke gui-smoke-artifacts
+          ./build/GuiSmoke_artefacts/Release/GuiSmoke
+          gui-smoke-artifacts
 
       - name: Upload screenshot artifacts
         if: always()
