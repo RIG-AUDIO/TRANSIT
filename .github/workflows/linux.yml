@@ -85,6 +85,27 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Stage release app
+        if: matrix.compiler == 'gcc' && matrix.build_type == 'Release'
+        run: |
+          mkdir -p release-app
+          cp build/TRANSIT_artefacts/Release/TRANSIT release-app/TRANSIT
+          {
+            echo 'TRANSIT Linux CI build (gcc Release, branch feat/gui-waveform-stability).'
+            echo 'The artifact service strips file modes; make it executable first:'
+            echo '  chmod +x TRANSIT && ./TRANSIT'
+            echo 'Runtime libs (same set CI installs): libasound2, freetype,'
+            echo 'fontconfig, X11 stack, OpenGL, GTK3.'
+          } > release-app/README.txt
+
+      - name: Upload release app
+        if: matrix.compiler == 'gcc' && matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: transit-linux-x64-release
+          path: release-app/
+          if-no-files-found: error
+
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4

@@ -356,12 +356,22 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 
 ## 3. GUI / layout / design findings (Milestones 3-6)
 
-### G1 — outdated numeral emblem  (remove in M3)
+### G1 — outdated numeral emblem  (implemented in M3)
 - `Source/TopBar.cpp:106-124` draws the neon-ring **"6"** badge
   ("mix-cover style"); `Source/TopBar.cpp:130` reserves 56 px for it.
   Remove the emblem, reflow `TopBar::resized`, keep the wordmark.
+- **Fix (implemented):** the RIG brand badge replaces the numeral in the
+  same 56 px slot — first-party `Source/Assets/rig_mark.svg` (padded
+  viewBox so the disc never clips, hairline rim, palette-tuned disc
+  `#1d2229` / ink `#e8ecf1`), embedded through the existing `TRANSITAssets`
+  binary-data target and drawn with `juce::Drawable::createFromImageData`
+  at the historic optical centre (34, 32); wordmark kept; `TopBar.h`
+  VOIDX-style comment removed. Provided masters in
+  `Media/rig-wordmark/` were modernized the same way (padding + rim).
+  CI: run 39254042952 green (8/8) at `001a82e`; badge verified from the
+  `gui-smoke-shots` artifact (ink centred within 0.5 px of the badge box).
 
-### G2 — neon "VOIDX-style" language conflicts with the design rules  (M3)
+### G2 — neon "VOIDX-style" language conflicts with the design rules  (implemented in M3)
 - `Source/TopBar.h:11` comment ("VOIDX-style"), `DJLook::neonCyan/neonPink`
   + `drawNeonEdge` (`Source/DJLook.h:18-23`, used at `TopBar.cpp:104`,
   `MasterStrip` gradient `TopBar.cpp:25-26`), FileList "blue glow pill"
@@ -371,6 +381,14 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   borders instead of neon gradients; no gratuitous glow (assignment design
   rules). Semantics kept where they already fit (cyan waveforms, amber
   playhead, red record) so re-skinning doesn't break recognizability.
+- **Fix (implemented):** `drawNeonEdge` → `drawLitBorder` (one ink
+  hairline at 20 % alpha) behind the top bar and the `GlassPanel` browser
+  backdrop; MasterStrip position-gradient → information cyan with alarm
+  red above 0.98 (near clip); active tab + selected-row glow pills → flat
+  `cyan`/`alarm` fills with dark on-fill text (matching the existing amber
+  "To A" language); off-palette `tabBlue`/`neonCyan`/`neonPink` tokens
+  deleted. CI: run 39258511344 green (8/8) at `6b8a808`, look verified
+  from `gui-smoke-shots`.
 
 ### G3 — hardcoded, non-responsive layout  (M4/M6)
 - `centerW = 300` and friends (`Source/MainComponent.cpp:835-931`),
@@ -402,20 +420,37 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   folder, added-date if available), keyboard navigation, clear selection
   state — consistent with the design tokens; search debounce already S6.
 
-### G7 — scattered color/style literals  (M3, into GUI_DESIGN_SYSTEM.md)
+### G7 — scattered color/style literals  (M3 colour roles implemented; spacing/radii/type roles go to GUI_DESIGN_SYSTEM.md)
 - Raw colours at `MainComponent.cpp:31`, `MainComponent.h:54`,
   `TopBar.cpp:16,40,117`, `DJLook.cpp` gradients — centralize in `DJLook`
   token tables (colour roles, spacing, radii, borders, type roles via the
   existing embedded Adriatica Next typefaces — `DJLook::getTypefaceForFont`,
   `Source/DJLook.h:31`, keep).
+- **Fix (implemented, colour roles):** new surface tokens `DJLook::deep`
+  (deck canvas, master strip, output-meter well) and `DJLook::well`
+  (overview stripe, channel VU); raw literals centralized in `TopBar`
+  (strip background, tab off-text → `dimInk`) and `MainComponent` (deck
+  canvas, overview, meter, channel VU); `TextButton::textColourOnId`
+  uses the `bg` token. Off-palette `tabBlue`/`neonCyan`/`neonPink`
+  deleted with G2. Spacing, radii and type roles are deliberately *not*
+  half-invented here — they are a deliverable of
+  `GUI_DESIGN_SYSTEM.md`.
 
-### G8 — global 30 Hz whole-window repaint  (M3-M6, grows with the redesign)
+### G8 — global 30 Hz whole-window repaint  (M3 start implemented; keeps growing with the redesign)
 - `startTimerHz(30)` + full `repaint()` (`Source/MainComponent.cpp:395`,
   `:773`).
 - **Fix:** keep one timer, but repaint only what changes (waveforms, meters,
   clock, transport readouts, top-bar strip); waveform playhead updates can
   ride the same tick with per-component repaint. This is the main paint-cost
   risk once the layout becomes richer.
+- **Fix (start, implemented):** the tick no longer calls a blanket
+  `repaint()` — it invalidates the two deck waveforms (playheads ride the
+  tick; this also keeps seek-while-paused visible, since no other call site
+  repaints the waveform) plus the 26 px output-meter strip. Everything else
+  updated in the callback already invalidates itself (labels, sliders,
+  tabs, channel VUs, master strip). Residual, documented: an idle *loaded*
+  waveform still re-renders every tick — gating that on position/state
+  change detection is deferred to the M5/M6 paint pass.
 
 ### G9 — parked tabs  (keep as-is)
 - FX/SAMPLER/LOOP disabled with "Not in this build" tooltips
@@ -433,7 +468,7 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   every subsequent commit gets the full matrix (PR events run on the head
   SHA). Never merge (assignment constraint).
 
-### C2 — no GUI smoke / screenshot job  (Milestone 3 onward)
+### C2 — no GUI smoke / screenshot job  (implemented in M3)
 - Current `UiShot` admits headless painting is unreliable
   (`Tools/UiShot.cpp:7-9`); workflow installs no X server
   (`.github/workflows/linux.yml:66-75`).
@@ -447,6 +482,24 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   bounds, or shows control intersections/escapes. Documented in
   `CI_VISUAL_TESTING.md`. Aesthetics are reviewed by a human from the
   artifacts — PNG existence alone never proves design correctness.
+- **Fix (implemented):** `Tools/GuiSmoke.cpp` (SmokeWindow + serviced
+  `runDispatchLoopUntil` pumps, manual RIFF tone writer, 3× S11
+  create/destroy cycles, 6 states × 4 viewports, per-frame re-decode +
+  size + bright-fraction validation) and the `gui-smoke` workflow job
+  (needs: guard; artefacts path `build/GuiSmoke_artefacts/Release/GuiSmoke`).
+  Three CI corrections were needed (≤5 budget): (1) JUCE console binaries
+  land under `*_artefacts/<config>/`; (2) JUCE interns WM/ICCCM/EWMH atoms
+  with `only_if_exists` and then writes `WM_PROTOCOLS` unchecked — bare
+  Xvfb has none → fatal BadAtom (serial 81); seeded 30 atom names server-
+  globally before JUCE init; (3) `JUCEApplicationBase::isStandaloneApp()` is
+  false for console apps, so JUCE never installs its error-swallowing X
+  handler and Xlib's default handler aborts the process — the harness now
+  installs its own swallow handler with capped diagnostics/backtraces
+  (mirroring the real app, which silently swallows the same residual
+  errors) plus `seedX11Atoms` reporting. Validation: run 39183275899
+  green (8/8), 24/24 shots validated, artifact `gui-smoke-shots`.
+  Phase 2 (intersection/escape checks, golden diffs) remains explicitly
+  deferred in `CI_VISUAL_TESTING.md`.
 
 ### C3 — no sanitizer jobs  (implemented on this branch)
 - Done: a bounded ASan+UBSan job over the JUCE-free test targets

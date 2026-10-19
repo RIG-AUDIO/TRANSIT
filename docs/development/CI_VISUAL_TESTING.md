@@ -45,6 +45,20 @@ writes nothing in that mode on some platforms. The CI gate therefore uses a
   JUCE's `XWindowSystem` exists) — atoms are server-global, so JUCE's own
   connection finds them.
 
+- **Swallowed X errors with diagnostics.** Seeding is necessary but not
+  sufficient: a console harness has no `JUCEApplication`, so
+  `JUCEApplicationBase::isStandaloneApp()` is false and JUCE never installs
+  the error-swallowing X handler it installs for `START_JUCE_APPLICATION`
+  apps (the real TRANSIT binary silently swallows the same residual
+  `BadAtom` requests). `GuiSmoke` installs its own handler before JUCE
+  initialises: each of the first 20 errors prints code/request/serial/
+  resource plus the atom name and a `backtrace_symbols_fd` frame dump to
+  stderr (then suppresses), and a swallowed error can never fail the job —
+  only missing/invalid screenshots do. The IO handler prints and
+  `std::_Exit(1)`s, because a lost X connection cannot produce frames.
+  Residual `BadAtom` diagnostics on the green runs are expected output,
+  not regressions.
+
 Harness seams are thin wrappers on `MainComponent` (`harnessLoadFile`,
 `harnessPlay`, `harnessDeckState`, `harnessSetZoom`, `harnessShowFxPage`)
 plus `WaveformView::setZoomIndex`; behavior stays in the engine/view classes.
