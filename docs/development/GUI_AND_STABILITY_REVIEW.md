@@ -407,8 +407,13 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   without new defaults. Layout responsiveness across sizes is exercised
   every run — the harness resizes `MainComponent` through all four
   viewports directly, which is the same `resized()` path a user drag
-  takes. Still M6: per-region minimum hardening beyond the window floor
-  (`centerW=300`), default-windowed evaluation, high-DPI sweep.
+  takes. **Final (M6):** no per-region clamps below the window floor are
+  needed — `setResizeLimits` prevents ever reaching a size smaller than
+  1100×824, which is exactly the smallest verified viewport, and every
+  region of `resized()` is proportional above it; the high-DPI sweep is
+  the harness's `hidpi` frame (2x device scale, 2560×1600) plus the four
+  viewport sizes every run. Default-windowed evaluation stays a human
+  decision for the final report (fullscreen default kept).
 
 ### G4 — linear (non-dB) meters  (implemented in M4)
 - `ChannelMeter` scales amplitude linearly (`Source/MainComponent.h:49-66`);

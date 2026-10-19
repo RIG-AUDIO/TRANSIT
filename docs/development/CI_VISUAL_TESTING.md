@@ -81,8 +81,11 @@ plus `WaveformView::setZoomIndex`; behavior stays in the engine/view classes.
    - `zoom4s` — waveform zoom index 0 (4 s window),
    - `whole` — zoom index 7 (whole track),
    - `playing` — transport engaged (see no-audio-device note above),
-   - `fx` — FX page shown (`showBrowser(false)`).
-   28 PNGs total, named `<state>-<w>x<h>.png`. Meter levels in the
+   - `fx` — FX page shown (`showBrowser(false)`),
+   - `hidpi` — loaded state at 2x device scale (component 1280×800,
+     PNG 2560×1600; M6 high-DPI sweep, single frame).
+   29 PNGs total, named `<state>-<w>x<h>.png` (pixel dimensions; the
+   `hidpi` frame is named `hidpi-2560x1600.png`). Meter levels in the
    pass-2 frames come from the `harnessSetMeters` seam (G4), since CI
    has no audio device; the browser folder is seeded via
    `harnessSetBrowserPath(outDir)` (G6), so every frame also shows the

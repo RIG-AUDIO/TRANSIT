@@ -261,16 +261,19 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Snapshot + phase-1 validation.
-// ---------------------------------------------------------------------------
+// Snapshot + phase-1 validation. `w`/`h` are the component's logical
+// size; `scale` renders at device scale (M6 high-DPI sweep) and the PNG
+// is named and validated at its pixel size.
 void snapshot(MainComponent& content, const juce::File& dir,
-              const juce::String& state, int w, int h) {
-    const juce::String name =
-        juce::String(state) + "-" + juce::String(w) + "x" + juce::String(h);
+              const juce::String& state, int w, int h, float scale = 1.0f) {
+    const int ew = (int)((float)w * scale + 0.5f);
+    const int eh = (int)((float)h * scale + 0.5f);
+    const juce::String name = juce::String(state) + "-" + juce::String(ew)
+                              + "x" + juce::String(eh);
     const juce::File out = dir.getChildFile(name + ".png");
 
     const juce::Image img =
-        content.createComponentSnapshot(content.getLocalBounds(), true, 1.0f);
+        content.createComponentSnapshot(content.getLocalBounds(), true, scale);
     if (!img.isValid()) {
         fail(name + ": snapshot image invalid");
         return;
@@ -294,18 +297,18 @@ void snapshot(MainComponent& content, const juce::File& dir,
         fail(name + ": PNG does not re-decode");
         return;
     }
-    if (back.getWidth() != w || back.getHeight() != h) {
+    if (back.getWidth() != ew || back.getHeight() != eh) {
         fail(name + ": size " + juce::String(back.getWidth()) + "x" +
-             juce::String(back.getHeight()) + " != " + juce::String(w) + "x" +
-             juce::String(h));
+             juce::String(back.getHeight()) + " != " + juce::String(ew) + "x" +
+             juce::String(eh));
         return;
     }
     // Bright-pixel fraction: catches all-black and all-transparent frames
     // while tolerating a dark-glass palette. Subsampled 4x4 for speed.
     int bright = 0;
     int total = 0;
-    for (int y = 0; y < h; y += 4) {
-        for (int x = 0; x < w; x += 4) {
+    for (int y = 0; y < eh; y += 4) {
+        for (int x = 0; x < ew; x += 4) {
             const juce::Colour c = back.getPixelAt(x, y);
             const int lum = static_cast<int>(c.getRed()) +
                             static_cast<int>(c.getGreen()) +
@@ -449,6 +452,12 @@ int main(int argc, char** argv) {
         content.harnessShowFxPage(false);
         pump(150);
     }
+
+    // M6: high-DPI sweep — the loaded state rendered at 2x device scale
+    // (pixel dimensions are 2560x1600; snapshot() validates them).
+    window.useViewport(1280, 800);
+    content.harnessSetMeters(0.72f, 0.55f, 0.88f);
+    snapshot(content, outDir, "hidpi", 1280, 800, 2.0f);
 
     if (gFailures != 0) {
         std::printf("GUI_SMOKE FAIL (%d failure(s))\n", gFailures);
