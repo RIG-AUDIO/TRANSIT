@@ -185,12 +185,14 @@ juce_add_gui_app(TRANSIT
   COMPANY_NAME "RIG-AUDIO"
 )
 
-# Embedded UI typefaces (OFL, see Source/Assets/OFL.txt).
+# Embedded UI assets: typefaces (OFL, see Source/Assets/OFL.txt) and the
+# RIG brand mark (first-party, drawn in the top bar).
 juce_add_binary_data(TRANSITAssets
   NAMESPACE TransitFonts
   SOURCES
     Source/Assets/AdriaticaNext-Medium.ttf
     Source/Assets/AdriaticaNext-CondensedBold.ttf
+    Source/Assets/rig_mark.svg
 )
 
 target_sources(TRANSIT PRIVATE

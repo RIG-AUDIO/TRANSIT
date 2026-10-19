@@ -2,6 +2,8 @@
 
 #include "TopBar.h"
 
+#include <BinaryData.h>
+
 void TopBar::MasterStrip::push(float v) {
     history[(size_t)pos] = v;
     pos = (pos + 1) % bins;
@@ -29,6 +31,9 @@ void TopBar::MasterStrip::paint(juce::Graphics& g) {
 }
 
 TopBar::TopBar() {
+    rigMark = juce::Drawable::createFromImageData(
+        TransitFonts::rig_mark_svg, (size_t)TransitFonts::rig_mark_svgSize);
+
     addAndMakeVisible(wordmark);
     wordmark.setFont(juce::Font(juce::FontOptions{}.withHeight(24.0f)).boldened());
     wordmark.setColour(juce::Label::textColourId, DJLook::ink);
@@ -103,25 +108,12 @@ void TopBar::paint(juce::Graphics& g) {
     DJLook::drawGlassPanel(g, area, 4.0f);
     DJLook::drawNeonEdge(g, area, 4.0f);
 
-    // Logo badge: neon-ring "6" emblem, mix-cover style, then the wordmark.
-    const float ex = 34.0f, ey = 32.0f, er = 19.0f;
-    juce::ColourGradient ring(DJLook::neonCyan, ex - er, ey, DJLook::neonPink,
-                              ex + er, ey, false);
-    g.setGradientFill(ring);
-    g.setOpacity(0.9f);
-    g.drawEllipse(ex - er, ey - er, er * 2.0f, er * 2.0f, 2.5f);
-    g.setOpacity(0.25f);
-    g.drawEllipse(ex - er - 3.0f, ey - er - 3.0f, er * 2.0f + 6.0f,
-                  er * 2.0f + 6.0f, 2.0f);
-    g.setOpacity(1.0f);
-    g.setColour(juce::Colour(0xff10141b));
-    g.fillEllipse(ex - er + 2.5f, ey - er + 2.5f, er * 2.0f - 5.0f,
-                  er * 2.0f - 5.0f);
-    g.setColour(DJLook::ink);
-    g.setFont(juce::Font(juce::FontOptions{}.withHeight(26.0f)).boldened());
-    g.drawText("6", juce::roundToInt(ex - er), juce::roundToInt(ey - er),
-               juce::roundToInt(er * 2.0f), juce::roundToInt(er * 2.0f),
-               juce::Justification::centred);
+    // RIG brand badge (review G1): embedded vector mark in the 56 px emblem
+    // slot, drawn at the historic optical centre (34, 32).
+    if (rigMark != nullptr) {
+        const juce::Rectangle<float> box(12.0f, 10.0f, 44.0f, 44.0f);
+        rigMark->drawWithin(g, box, juce::RectanglePlacement::centred, 1.0f);
+    }
 }
 
 void TopBar::resized() {
