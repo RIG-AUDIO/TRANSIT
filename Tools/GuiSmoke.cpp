@@ -20,29 +20,88 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 #if JUCE_LINUX
  #include <X11/Xlib.h>
+ #include <execinfo.h>
 #endif
 
 namespace {
 
 // ---------------------------------------------------------------------------
-// X11 atom seeding (bare-server fix).
+// X11 error handling + atom seeding (bare-server fixes).
 //
-// JUCE's juce_XWindowSystem_linux.cpp interns a set of WM/ICCCM/EWMH atoms
-// with XInternAtom(..., only_if_exists = true) in XWindowSystemUtilities::Atoms
-// and in getIfExists() call sites, then window creation passes atoms.protocols
-// ("WM_PROTOCOLS") to XChangeProperty unchecked. On a desktop some other
-// client has already created those atoms, but on a bare Xvfb server (no
-// window manager, no prior clients) they do not exist yet: the lookup
-// returns 0, the X server answers BadAtom, and its default error handler
-// aborts the process (exit 1) before any GUI code runs. Seeding every such
-// name with XInternAtom(..., False) on a short-lived connection makes them
-// exist for JUCE's own connection (atoms are server-global and persist).
+// (1) Handler: JUCE installs its own error-swallowing X handler only when
+//     JUCEApplicationBase::isStandaloneApp() — i.e. only for apps created
+//     via START_JUCE_APPLICATION (createInstance != nullptr). This console
+//     harness has no JUCEApplication, so JUCE never installs it and the
+//     Xlib default handler stays active: any X error aborts the process
+//     with exit 1. The real TRANSIT app instead swallows stray WM-protocol
+//     errors silently. We mirror the app: install our own handler first
+//     (JUCE will not touch it in this process) so a stray error degrades to
+//     a diagnostic line instead of killing the job.
+//
+// (2) Atom seeding: JUCE's juce_XWindowSystem_linux.cpp interns a set of
+//     WM/ICCCM/EWMH atoms with XInternAtom(..., only_if_exists = true)
+//     (XWindowSystemUtilities::Atoms and getIfExists call sites), then
+//     passes atoms.protocols ("WM_PROTOCOLS") to XChangeProperty unchecked
+//     at window creation. On a desktop some other client has already
+//     created those atoms, but on a bare Xvfb server (no window manager,
+//     no prior clients) they do not exist yet: the lookup returns 0 and the
+//     write raises BadAtom. Seeding every such name with
+//     XInternAtom(..., False) on a short-lived connection makes them exist
+//     for JUCE's own connection (atoms are server-global and persist).
 // ---------------------------------------------------------------------------
 #if JUCE_LINUX
+int gXErrorsSeen = 0;
+
+int smokeXErrorHandler(Display* dpy, XErrorEvent* ev) {
+    static bool inHandler = false; // guards XGetAtomName against recursion
+    char text[128] = { 0 };
+    XGetErrorText(dpy, ev->error_code, text, static_cast<int>(sizeof(text)));
+    char atomName[128] = "n/a";
+    if (!inHandler && ev->error_code == BadAtom && ev->resourceid != 0) {
+        inHandler = true;
+        if (char* an =
+                XGetAtomName(dpy, static_cast<Atom>(ev->resourceid))) {
+            std::snprintf(atomName, sizeof(atomName), "%s", an);
+            XFree(an);
+        }
+        inHandler = false;
+    }
+    if (gXErrorsSeen < 20) {
+        std::fprintf(stderr,
+                     "GUI_SMOKE X error (swallowed): %s code=%d req=%d "
+                     "minor=%d serial=%lu resource=0x%lx atom-name=%s\n",
+                     text, static_cast<int>(ev->error_code),
+                     static_cast<int>(ev->request_code),
+                     static_cast<int>(ev->minor_code),
+                     static_cast<unsigned long>(ev->serial),
+                     static_cast<unsigned long>(ev->resourceid), atomName);
+        void* frames[32];
+        const int n = backtrace(frames, 32);
+        backtrace_symbols_fd(frames, n, 2); // stderr, avoids fileno()
+    } else if (gXErrorsSeen == 20) {
+        std::fprintf(stderr,
+                     "GUI_SMOKE X errors: further messages suppressed\n");
+    }
+    ++gXErrorsSeen;
+    return 0; // swallow, like the real app does
+}
+
+int smokeXIOErrorHandler(Display*) {
+    std::fprintf(stderr, "GUI_SMOKE X IO error: connection lost\n");
+    std::fflush(stderr);
+    std::_Exit(1);
+}
+
+void installX11ErrorHandlers() {
+    XSetErrorHandler(smokeXErrorHandler);
+    XSetIOErrorHandler(smokeXIOErrorHandler);
+}
+
 void seedX11Atoms() {
     static const char* const kSeedNames[] = {
         // Atoms ctor in juce_XWindowSystem_linux.cpp (getIfExists)
@@ -62,13 +121,26 @@ void seedX11Atoms() {
         // Xlib WMProps lookups also use only-if-exists semantics
         "WM_NORMAL_HINTS", "WM_SIZE_HINTS",
     };
-    if (Display* dpy = XOpenDisplay(nullptr)) {
-        for (const char* name : kSeedNames)
-            XInternAtom(dpy, name, False);
-        XCloseDisplay(dpy);
+    Display* dpy = XOpenDisplay(nullptr);
+    if (dpy == nullptr) {
+        std::fprintf(stderr, "GUI_SMOKE seed: XOpenDisplay FAILED\n");
+        return;
     }
+    int nonZero = 0;
+    for (const char* name : kSeedNames) {
+        if (XInternAtom(dpy, name, False) != 0)
+            ++nonZero;
+    }
+    const Atom check = XInternAtom(dpy, "WM_PROTOCOLS", False);
+    std::fprintf(stderr, "GUI_SMOKE seed: display ok, %d/%zu atoms, "
+                         "WM_PROTOCOLS=%lu\n",
+                 nonZero,
+                 sizeof(kSeedNames) / sizeof(kSeedNames[0]),
+                 static_cast<unsigned long>(check));
+    XCloseDisplay(dpy);
 }
 #else
+void installX11ErrorHandlers() {}
 void seedX11Atoms() {}
 #endif
 
@@ -277,7 +349,9 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    // Must run before JUCE's XWindowSystem exists (see seedX11Atoms).
+    // Must run before JUCE's XWindowSystem exists (see the block comments):
+    // swallow-handler first, then atom seeding.
+    installX11ErrorHandlers();
     seedX11Atoms();
 
     juce::ScopedJuceInitialiser_GUI init;
