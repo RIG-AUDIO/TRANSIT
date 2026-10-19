@@ -29,17 +29,17 @@ class LoadGate {
 public:
     // Message thread: begin a new job; returns its generation token.
     uint64_t submit() {
-        return gen.fetch_add(1, std::memory_order_acq_rel) + 1;
+        return gen.fetch_add(1, std::memory_order_seq_cst) + 1;
     }
     // Worker: false once a newer submit happened — abandon this pipeline.
     bool isCurrent(uint64_t token) const {
-        return token == gen.load(std::memory_order_acquire);
+        return token == gen.load(std::memory_order_seq_cst);
     }
     // Message thread: publish only the newest generation's result.
     bool accept(uint64_t token) const {
-        return token == gen.load(std::memory_order_acquire);
+        return token == gen.load(std::memory_order_seq_cst);
     }
-    uint64_t current() const { return gen.load(std::memory_order_acquire); }
+    uint64_t current() const { return gen.load(std::memory_order_seq_cst); }
 
 private:
     std::atomic<uint64_t> gen{ 0 };

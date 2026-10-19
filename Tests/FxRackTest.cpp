@@ -32,8 +32,8 @@ std::atomic<int> gDestroyed{ 0 };
 
 class StubPlugin : public juce::AudioPluginInstance {
 public:
-    StubPlugin() { gCreated.fetch_add(1, std::memory_order_relaxed); }
-    ~StubPlugin() override { gDestroyed.fetch_add(1, std::memory_order_relaxed); }
+    StubPlugin() { gCreated.fetch_add(1, std::memory_order_seq_cst); }
+    ~StubPlugin() override { gDestroyed.fetch_add(1, std::memory_order_seq_cst); }
 
     void fillInPluginDescription(juce::PluginDescription&) const override {}
     const juce::String getName() const override { return "Stub"; }
@@ -72,14 +72,14 @@ struct FxRackTestAccess {
         std::lock_guard<std::mutex> lock(r.stageMutex);
         r.slots[(size_t)slot].staged = std::move(p);
         r.slots[(size_t)slot].stagedReady.store(true,
-                                                 std::memory_order_release);
+                                                 std::memory_order_seq_cst);
         r.slots[(size_t)slot].name = "Stub";
     }
     static juce::AudioPluginInstance* active(FxRack& r, int slot) {
         return r.slots[(size_t)slot].active.get();
     }
     static bool stagedReady(FxRack& r, int slot) {
-        return r.slots[(size_t)slot].stagedReady.load(std::memory_order_acquire);
+        return r.slots[(size_t)slot].stagedReady.load(std::memory_order_seq_cst);
     }
     static size_t retiredSize(FxRack& r) { return r.retired.size(); }
     static size_t retiredCapacity(FxRack& r) { return r.retired.capacity(); }
@@ -87,10 +87,10 @@ struct FxRackTestAccess {
         return std::unique_lock<std::mutex>(r.retireMutex);
     }
     static void setSuspendReq(FxRack& r, int v) {
-        r.suspendReq.store(v, std::memory_order_release);
+        r.suspendReq.store(v, std::memory_order_seq_cst);
     }
     static long long suspendAck(FxRack& r) {
-        return r.suspendAck.load(std::memory_order_acquire);
+        return r.suspendAck.load(std::memory_order_seq_cst);
     }
 };
 
@@ -119,7 +119,7 @@ void testSuspendHandshake() {
     rack.setAudioRunning(true);
     std::atomic<bool> stop{ false };
     std::thread audio([&] {
-        while (!stop.load(std::memory_order_acquire)) {
+        while (!stop.load(std::memory_order_seq_cst)) {
             rack.blockBoundary();
             std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
@@ -139,7 +139,7 @@ void testSuspendHandshake() {
             silent = false;
     check(silent, "processAux silent while suspended");
     rack.resumeProcessing();
-    stop.store(true, std::memory_order_release);
+    stop.store(true, std::memory_order_seq_cst);
     audio.join();
     rack.setAudioRunning(false);
     for (int i = 0; i < 64; ++i) {
@@ -192,9 +192,9 @@ void testRetireDeferredByLock() {
     rack.blockBoundary(); // lock free again: swap + retire
     check(FxRackTestAccess::active(rack, 0) == second, "swap after unlock");
     check(FxRackTestAccess::retiredSize(rack) == 1, "old instance retired");
-    const int before = gDestroyed.load(std::memory_order_relaxed);
+    const int before = gDestroyed.load(std::memory_order_seq_cst);
     rack.pumpRetired(); // message thread destroys it
-    check(gDestroyed.load(std::memory_order_relaxed) == before + 1,
+    check(gDestroyed.load(std::memory_order_seq_cst) == before + 1,
           "retired instance destroyed by pump");
 }
 
@@ -220,9 +220,9 @@ void testRetireCapacityDeferral() {
     check(FxRackTestAccess::active(rack, 0) == cur, "admission deferred at capacity");
     check(FxRackTestAccess::stagedReady(rack, 0), "overflow staged stays ready");
     check(FxRackTestAccess::retiredSize(rack) == cap, "no push beyond capacity");
-    const int before = gDestroyed.load(std::memory_order_relaxed);
+    const int before = gDestroyed.load(std::memory_order_seq_cst);
     rack.pumpRetired();
-    check(gDestroyed.load(std::memory_order_relaxed) == before + (int)cap,
+    check(gDestroyed.load(std::memory_order_seq_cst) == before + (int)cap,
           "pump frees the full retired set");
     rack.blockBoundary(); // capacity free: final adopt completes
     check(FxRackTestAccess::active(rack, 0) == overflow, "final adopt after pump");
@@ -235,8 +235,8 @@ int run() {
     testPickupDeferredWhileSuspended();
     testRetireDeferredByLock();
     testRetireCapacityDeferral();
-    if (gCreated.load(std::memory_order_relaxed)
-        == gDestroyed.load(std::memory_order_relaxed))
+    if (gCreated.load(std::memory_order_seq_cst)
+        == gDestroyed.load(std::memory_order_seq_cst))
         check(true, "every stub destroyed exactly once");
     else
         check(false, "every stub destroyed exactly once");

@@ -173,12 +173,12 @@ void AudioEngine::handleIncomingMidiMessage(juce::MidiInput*,
     // MIDI thread: stamp with the audio frame counter and queue. No UI, no
     // locks; the audio thread drains and applies at the next block.
     if (message.isController()) {
-        midiQueue.push(frameCount.load(std::memory_order_relaxed),
+        midiQueue.push(frameCount.load(std::memory_order_seq_cst),
                        message.getChannel(), message.getControllerNumber(),
                        (float)message.getControllerValue() / 127.0f);
-        learnCh.store(message.getChannel(), std::memory_order_relaxed);
-        learnCc.store(message.getControllerNumber(), std::memory_order_relaxed);
-        learnStamp.fetch_add(1, std::memory_order_relaxed);
+        learnCh.store(message.getChannel(), std::memory_order_seq_cst);
+        learnCc.store(message.getControllerNumber(), std::memory_order_seq_cst);
+        learnStamp.fetch_add(1, std::memory_order_seq_cst);
     }
 }
 
@@ -292,7 +292,7 @@ void AudioEngine::loadFile(int deck, const juce::String& path) {
     job.token = gates[deck].submit(); // newest-wins: supersedes any in-flight
     job.path = path.toStdString();
     job.fileName = juce::File(path).getFileName().toStdString();
-    states[deck].store((int)lean::LoadState::Loading, std::memory_order_release);
+    states[deck].store((int)lean::LoadState::Loading, std::memory_order_seq_cst);
     errors[deck] = {};
     names[deck] = {};
     {
@@ -309,7 +309,7 @@ void AudioEngine::indexFolder(const juce::String& path) {
     LoadJob job;
     job.kind = LoadJob::Kind::Index;
     job.path = path.toStdString();
-    scanning.store(true, std::memory_order_release);
+    scanning.store(true, std::memory_order_seq_cst);
     {
         std::lock_guard<std::mutex> lock(jobMutex);
         jobs.push_back(std::move(job));
@@ -344,7 +344,7 @@ void AudioEngine::runIndexJob(const LoadJob& job) {
     int touched = -1;
     if (library.isOpen())
         touched = library.scanFolder(job.path); // Library serializes readers
-    lastScanCount.store(touched, std::memory_order_release);
+    lastScanCount.store(touched, std::memory_order_seq_cst);
     // Stay "scanning" while another index job is already queued.
     bool more = false;
     {
@@ -353,11 +353,11 @@ void AudioEngine::runIndexJob(const LoadJob& job) {
             if (j.kind == LoadJob::Kind::Index)
                 more = true;
     }
-    scanning.store(!more, std::memory_order_release);
+    scanning.store(!more, std::memory_order_seq_cst);
 }
 
 void AudioEngine::refreshFxScan() {
-    if (fxScanActive.exchange(true, std::memory_order_acq_rel))
+    if (fxScanActive.exchange(true, std::memory_order_seq_cst))
         return; // one discovery walk in flight or queued
     LoadJob job;
     job.kind = LoadJob::Kind::ScanFx;
@@ -377,7 +377,7 @@ void AudioEngine::runScanFxJob() {
         fxScanResult = std::move(found);
         fxResultReady = true;
     }
-    fxScanActive.store(false, std::memory_order_release);
+    fxScanActive.store(false, std::memory_order_seq_cst);
     triggerAsyncUpdate(); // commit lands on the message thread
 }
 
@@ -412,7 +412,7 @@ void AudioEngine::runLoadJob(const LoadJob& job) {
         return; // superseded mid-decode: drop silently
 
     states[job.deck].store((int)lean::LoadState::Analyzing,
-                           std::memory_order_release);
+                           std::memory_order_seq_cst);
     const int frames = (int)(decoded.stereo.size() / 2);
     const double rate = decoded.sampleRate;
     LoadResult r;
@@ -461,7 +461,7 @@ void AudioEngine::handleAsyncUpdate() {
             errors[d] = juce::String(r.error);
             names[d] = {};
             states[d].store((int)lean::LoadState::Error,
-                            std::memory_order_release);
+                            std::memory_order_seq_cst);
             continue;
         }
         // Commit on the message thread: every reader (paint, timer) runs on
@@ -471,7 +471,7 @@ void AudioEngine::handleAsyncUpdate() {
         names[d] = juce::String(r.fileName);
         errors[d] = {};
         fileLoaded[d] = true;
-        states[d].store((int)lean::LoadState::Ready, std::memory_order_release);
+        states[d].store((int)lean::LoadState::Ready, std::memory_order_seq_cst);
         mixer.channel(d).deck.load(std::move(r.stereo), r.rate); // staged
         if (auto* device = deviceManager.getCurrentAudioDevice())
             mixer.setOutputRate(device->getCurrentSampleRate());
@@ -543,7 +543,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const*, int,
     // Publish the audio frame counter for MIDI stamping. Events stamped with
     // the value observed before this store apply at the next block boundary;
     // the counter is monotonic, so the queue can never see a regression.
-    frameCount.store(blockFrame, std::memory_order_relaxed);
+    frameCount.store(blockFrame, std::memory_order_seq_cst);
 
     // Render watchdog: worst-case time and overruns past the block budget.
     const double ticksPerSec =
@@ -551,15 +551,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext(const float* const*, int,
     if (ticksPerSec > 0.0 && deviceRate > 0.0) {
         const long long us =
             (long long)((double)(t1 - t0) * 1000000.0 / ticksPerSec);
-        long long prev = maxRenderUsUs.load(std::memory_order_relaxed);
+        long long prev = maxRenderUsUs.load(std::memory_order_seq_cst);
         while (us > prev
                && !maxRenderUsUs.compare_exchange_weak(prev, us,
-                                                      std::memory_order_relaxed)) {
+                                                      std::memory_order_seq_cst)) {
         }
         const long long budget =
             (long long)((double)numSamples * 1000000.0 / deviceRate);
         if (us > budget)
-            overruns.fetch_add(1, std::memory_order_relaxed);
+            overruns.fetch_add(1, std::memory_order_seq_cst);
     }
 
     if (left && recorder.isRecording())

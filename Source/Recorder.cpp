@@ -108,10 +108,10 @@ void Recorder::pushBlock(const float* left, const float* right, int numSamples) 
         return;
     // SPSC ring: writePos is producer-only, readPos consumer-only. On overflow
     // drop the incoming (newest) block rather than moving the consumer index.
-    const uint64_t w = writePos.load(std::memory_order_relaxed);
-    const uint64_t r = readPos.load(std::memory_order_acquire);
+    const uint64_t w = writePos.load(std::memory_order_seq_cst);
+    const uint64_t r = readPos.load(std::memory_order_seq_cst);
     if (w + (uint64_t)numSamples - r > kCapFrames) {
-        dropped.fetch_add((long long)numSamples, std::memory_order_relaxed);
+        dropped.fetch_add((long long)numSamples, std::memory_order_seq_cst);
         wake.notify_one();
         return;
     }
@@ -121,7 +121,7 @@ void Recorder::pushBlock(const float* left, const float* right, int numSamples) 
         ring[(p & kMask) * 2 + 1] = right ? right[i] : left[i];
         ++p;
     }
-    writePos.store(p, std::memory_order_release);
+    writePos.store(p, std::memory_order_seq_cst);
     wake.notify_one();
 }
 
@@ -140,8 +140,8 @@ void Recorder::writerLoop() {
     FILE* f = (FILE*)file;
     std::vector<float> chunk(32768 * 2);
     for (;;) {
-        uint64_t w = writePos.load(std::memory_order_acquire);
-        uint64_t r = readPos.load(std::memory_order_acquire);
+        uint64_t w = writePos.load(std::memory_order_seq_cst);
+        uint64_t r = readPos.load(std::memory_order_seq_cst);
         while (r < w) {
             uint64_t n = w - r;
             if (n > 32768)
@@ -150,24 +150,24 @@ void Recorder::writerLoop() {
                 chunk[i * 2] = ring[((r + i) & kMask) * 2];
                 chunk[i * 2 + 1] = ring[((r + i) & kMask) * 2 + 1];
             }
-            readPos.fetch_add(n, std::memory_order_release);
+            readPos.fetch_add(n, std::memory_order_seq_cst);
             r += n;
             fwrite(chunk.data(), sizeof(float), (size_t)n * 2, f);
             totalWritten += (long long)n;
-            w = writePos.load(std::memory_order_acquire);
+            w = writePos.load(std::memory_order_seq_cst);
         }
         if (!recording.load()) {
             // Drain anything that arrived while writing, then finalize.
-            w = writePos.load(std::memory_order_acquire);
-            if (readPos.load(std::memory_order_acquire) >= w)
+            w = writePos.load(std::memory_order_seq_cst);
+            if (readPos.load(std::memory_order_seq_cst) >= w)
                 break;
             continue;
         }
         std::unique_lock<std::mutex> lock(mutex);
         wake.wait_for(lock, std::chrono::milliseconds(100), [&] {
             return !recording.load()
-                || writePos.load(std::memory_order_acquire)
-                    != readPos.load(std::memory_order_acquire);
+                || writePos.load(std::memory_order_seq_cst)
+                    != readPos.load(std::memory_order_seq_cst);
         });
     }
     // Patch sizes and close. Classic RIFF caps at 4 GB; clamp rather than wrap.

@@ -61,7 +61,7 @@ void testConcurrent() {
     std::thread submitter([&] {
         for (uint64_t i = 0; i < kSubmits; ++i)
             gate.submit();
-        done.store(true, std::memory_order_release);
+        done.store(true, std::memory_order_seq_cst);
     });
     uint64_t lastAccepted = 0;
     bool regressed = false;
@@ -73,7 +73,7 @@ void testConcurrent() {
                 regressed = true;
             lastAccepted = t;
         }
-        if (done.load(std::memory_order_acquire)) {
+        if (done.load(std::memory_order_seq_cst)) {
             // Drain once more, then verify the final generation.
             const uint64_t fin = gate.current();
             if (gate.accept(fin) && fin < lastAccepted)

@@ -87,7 +87,7 @@ bool FxRack::loadPlugin(int slot, const juce::String& bundlePath,
         std::lock_guard<std::mutex> lock(stageMutex);
         slots[(size_t)slot].staged = std::move(instance);
     }
-    slots[(size_t)slot].stagedReady.store(true, std::memory_order_release);
+    slots[(size_t)slot].stagedReady.store(true, std::memory_order_seq_cst);
     slots[(size_t)slot].name = found[0]->name;
     paths[(size_t)slot] = bundlePath;
     return true;
@@ -112,7 +112,7 @@ bool FxRack::tryUnloadPlugin(int slot) {
     {
         std::lock_guard<std::mutex> lock(stageMutex);
         slots[(size_t)slot].staged.reset();
-        slots[(size_t)slot].stagedReady.store(true, std::memory_order_release);
+        slots[(size_t)slot].stagedReady.store(true, std::memory_order_seq_cst);
     }
     slots[(size_t)slot].name = "-";
     return true;
@@ -126,13 +126,13 @@ void FxRack::unloadPlugin(int slot) {
 
 void FxRack::setBypass(int slot, bool bypassed) {
     if (slot >= 0 && slot < kSlots)
-        slots[(size_t)slot].bypass.store(bypassed, std::memory_order_relaxed);
+        slots[(size_t)slot].bypass.store(bypassed, std::memory_order_seq_cst);
 }
 
 bool FxRack::isBypassed(int slot) const {
     if (slot < 0 || slot >= kSlots)
         return true;
-    return slots[(size_t)slot].bypass.load(std::memory_order_relaxed);
+    return slots[(size_t)slot].bypass.load(std::memory_order_seq_cst);
 }
 
 juce::String FxRack::slotName(int slot) const {
@@ -203,7 +203,7 @@ void FxRack::prepare(double sampleRate, int block) {
             if (s.active)
                 s.active->prepareToPlay(rate, blockSize);
         resumeProcessing();
-        rateDirty.store(false, std::memory_order_release);
+        rateDirty.store(false, std::memory_order_seq_cst);
     }
 }
 
@@ -219,47 +219,47 @@ void FxRack::pumpRetired() {
 }
 
 void FxRack::setAudioRunning(bool running) {
-    audioActive.store(running, std::memory_order_release);
+    audioActive.store(running, std::memory_order_seq_cst);
     if (!running)
-        suspendReq.store(0, std::memory_order_release);
+        suspendReq.store(0, std::memory_order_seq_cst);
 }
 
 bool FxRack::suspendProcessing() {
-    if (!audioActive.load(std::memory_order_acquire)) {
+    if (!audioActive.load(std::memory_order_seq_cst)) {
         // No device callback can be in flight (not started, or stopped
         // before we looked): plugin state is already ours to touch.
-        suspendReq.store(0, std::memory_order_release);
+        suspendReq.store(0, std::memory_order_seq_cst);
         return true;
     }
-    const long long before = suspendAck.load(std::memory_order_acquire);
-    suspendReq.store(1, std::memory_order_release);
+    const long long before = suspendAck.load(std::memory_order_seq_cst);
+    suspendReq.store(1, std::memory_order_seq_cst);
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
     for (;;) {
-        if (suspendAck.load(std::memory_order_acquire) > before)
+        if (suspendAck.load(std::memory_order_seq_cst) > before)
             return true; // audio observed the request; it stays silent now
-        if (!audioActive.load(std::memory_order_acquire)) {
+        if (!audioActive.load(std::memory_order_seq_cst)) {
             // Callbacks stopped while we waited: nothing can run anymore.
-            suspendReq.store(0, std::memory_order_release);
+            suspendReq.store(0, std::memory_order_seq_cst);
             return true;
         }
         if (std::chrono::steady_clock::now() >= deadline)
             break;
         std::this_thread::sleep_for(std::chrono::microseconds(200));
     }
-    suspendReq.store(0, std::memory_order_release);
+    suspendReq.store(0, std::memory_order_seq_cst);
     return false; // caller aborts; the timer retries on the next tick
 }
 
 void FxRack::resumeProcessing() {
-    suspendReq.store(0, std::memory_order_release);
+    suspendReq.store(0, std::memory_order_seq_cst);
 }
 
 void FxRack::blockBoundary() {
-    if (suspendReq.load(std::memory_order_acquire) != 0) {
+    if (suspendReq.load(std::memory_order_seq_cst) != 0) {
         // Acknowledge once per block while requested, and do NOT swap slots:
         // the message thread may be preparing the active instance right now.
-        suspendAck.fetch_add(1, std::memory_order_release);
+        suspendAck.fetch_add(1, std::memory_order_seq_cst);
         return;
     }
     adoptStaged(); // pickup runs every block, even when all sends are silent
@@ -267,7 +267,7 @@ void FxRack::blockBoundary() {
 
 void FxRack::adoptStaged() {
     for (auto& s : slots) {
-        if (!s.stagedReady.load(std::memory_order_acquire))
+        if (!s.stagedReady.load(std::memory_order_seq_cst))
             continue;
         if (!stageMutex.try_lock())
             break; // message thread is staging; retry next block, never block
@@ -292,7 +292,7 @@ void FxRack::adoptStaged() {
         }
         if (canSwap) {
             s.active = std::move(s.staged);
-            s.stagedReady.store(false, std::memory_order_release);
+            s.stagedReady.store(false, std::memory_order_seq_cst);
         }
         stageMutex.unlock();
         if (!canSwap)
@@ -303,7 +303,7 @@ void FxRack::adoptStaged() {
 void FxRack::processAux(int aux, float* left, float* right, int numSamples) {
     if (aux < 0 || aux >= kSlots || !left || !right || numSamples <= 0)
         return;
-    if (suspendReq.load(std::memory_order_acquire) != 0) {
+    if (suspendReq.load(std::memory_order_seq_cst) != 0) {
         // Message thread holds a suspend: never touch plugin state here.
         for (int i = 0; i < numSamples; ++i)
             left[i] = right[i] = 0.0f;
@@ -311,8 +311,8 @@ void FxRack::processAux(int aux, float* left, float* right, int numSamples) {
     }
     adoptStaged(); // idempotent; also covers direct calls (dev probes)
     auto& s = slots[(size_t)aux];
-    if (!s.active || s.bypass.load(std::memory_order_relaxed)
-        || rateDirty.load(std::memory_order_relaxed)) {
+    if (!s.active || s.bypass.load(std::memory_order_seq_cst)
+        || rateDirty.load(std::memory_order_seq_cst)) {
         for (int i = 0; i < numSamples; ++i)
             left[i] = right[i] = 0.0f;
         return;

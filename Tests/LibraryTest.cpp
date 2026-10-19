@@ -82,29 +82,29 @@ int run() {
             do {
                 const auto r = lib.search("a");
                 if (!r.empty())
-                    hits.fetch_add(1, std::memory_order_relaxed);
-                served.fetch_add(1, std::memory_order_relaxed);
-            } while (!stop.load(std::memory_order_acquire));
+                    hits.fetch_add(1, std::memory_order_seq_cst);
+                served.fetch_add(1, std::memory_order_seq_cst);
+            } while (!stop.load(std::memory_order_seq_cst));
         });
         std::thread reader2([&] {
             do {
                 const int c = lib.count();
                 if (c < 0)
-                    hits.store(-1, std::memory_order_relaxed);
-                served.fetch_add(1, std::memory_order_relaxed);
-            } while (!stop.load(std::memory_order_acquire));
+                    hits.store(-1, std::memory_order_seq_cst);
+                served.fetch_add(1, std::memory_order_seq_cst);
+            } while (!stop.load(std::memory_order_seq_cst));
         });
         int badScans = 0;
         for (int i = 0; i < 20; ++i)
             if (lib.scanFolder(dir.string()) != 4)
                 ++badScans;
-        stop.store(true, std::memory_order_release);
+        stop.store(true, std::memory_order_seq_cst);
         reader.join();
         reader2.join();
         check(badScans == 0, "concurrent scans all indexed 4");
-        check(served.load(std::memory_order_relaxed) >= 2,
+        check(served.load(std::memory_order_seq_cst) >= 2,
               "concurrent readers served");
-        check(hits.load(std::memory_order_relaxed) > 0,
+        check(hits.load(std::memory_order_seq_cst) > 0,
               "concurrent search returned rows");
         check(lib.count() == 4, "count stable after concurrent scans");
     }

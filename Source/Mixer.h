@@ -62,7 +62,7 @@ public:
     void reset();
     double gainDb(int band) const {
         return gains[band < 0 ? 0 : (band > 2 ? 2 : band)].load(
-            std::memory_order_relaxed);
+            std::memory_order_seq_cst);
     }
     // Audio thread: rebuild coefficients if the message thread changed them.
     void updateIfNeeded();

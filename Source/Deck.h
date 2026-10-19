@@ -50,7 +50,7 @@ public:
 
     void setOutputRate(double rate);
     void setTempo(double t);
-    double getTempo() const { return tempo.load(std::memory_order_relaxed); }
+    double getTempo() const { return tempo.load(std::memory_order_seq_cst); }
 
     // Sync helper: tempo that matches leaderEffectiveBpm given our analyzed
     // BPM, or -1 when our BPM is unknown. Pure math, unit-tested.
@@ -63,16 +63,16 @@ public:
     void setGain(float g) { gain.setTarget(g); }
     float gainTarget() const { return gain.targetValue(); }
     void setKeylock(bool enabled);
-    bool isKeylock() const { return keylock.load(std::memory_order_relaxed); }
+    bool isKeylock() const { return keylock.load(std::memory_order_seq_cst); }
     void setKeylockEco(bool eco);
     void play(bool shouldPlay) { playing.store(shouldPlay); }
     void setPositionSeconds(double seconds);
     void setCuePointSeconds(double seconds);
     double getCuePointSeconds() const;
-    bool isPlaying() const { return playing.load(std::memory_order_relaxed); }
+    bool isPlaying() const { return playing.load(std::memory_order_seq_cst); }
     double getPositionSeconds() const;
     double getLengthSeconds() const;
-    int getNumFrames() const { return infoFrames.load(std::memory_order_relaxed); }
+    int getNumFrames() const { return infoFrames.load(std::memory_order_seq_cst); }
     // Stretcher latency in output samples (0 when keylock is off).
     int getStretchLatency() const;
 

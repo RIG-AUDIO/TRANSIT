@@ -17,74 +17,74 @@ void Deck::load(std::vector<float> interleavedStereo, double sampleRate) {
     next->stereo = std::move(interleavedStereo);
     next->frames = static_cast<int>(next->stereo.size() / 2);
     next->rate = sampleRate > 0.0 ? sampleRate : 44100.0;
-    fileRate.store(next->rate, std::memory_order_relaxed);
+    fileRate.store(next->rate, std::memory_order_seq_cst);
     // Publish length metadata immediately: adoptStaged only runs on the
     // audio thread during render, which never happens while paused, so the
     // UI would otherwise show the previous track's length until first Play.
-    infoFrames.store(next->frames, std::memory_order_relaxed);
-    infoRate.store(next->rate, std::memory_order_relaxed);
+    infoFrames.store(next->frames, std::memory_order_seq_cst);
+    infoRate.store(next->rate, std::memory_order_seq_cst);
     {
         std::lock_guard<std::mutex> lock(stageMutex);
         staged = std::move(next);
     }
-    stagedReady.store(true, std::memory_order_release);
-    position.store(0.0, std::memory_order_relaxed);
+    stagedReady.store(true, std::memory_order_seq_cst);
+    position.store(0.0, std::memory_order_seq_cst);
     cueFrame = 0.0;
-    playing.store(false, std::memory_order_relaxed);
-    stretchDirty.store(true, std::memory_order_relaxed);
+    playing.store(false, std::memory_order_seq_cst);
+    stretchDirty.store(true, std::memory_order_seq_cst);
 }
 
 void Deck::setOutputRate(double rate) {
-    outputRate.store(rate > 0.0 ? rate : 44100.0, std::memory_order_relaxed);
-    stretchDirty.store(true, std::memory_order_relaxed);
+    outputRate.store(rate > 0.0 ? rate : 44100.0, std::memory_order_seq_cst);
+    stretchDirty.store(true, std::memory_order_seq_cst);
 }
 
 void Deck::setTempo(double t) {
-    tempo.store(std::clamp(t, 0.25, 4.0), std::memory_order_relaxed);
+    tempo.store(std::clamp(t, 0.25, 4.0), std::memory_order_seq_cst);
 }
 
 void Deck::setKeylock(bool enabled) {
-    keylock.store(enabled, std::memory_order_relaxed);
-    stretchDirty.store(true, std::memory_order_relaxed);
+    keylock.store(enabled, std::memory_order_seq_cst);
+    stretchDirty.store(true, std::memory_order_seq_cst);
 }
 
 void Deck::setKeylockEco(bool ecoMode) {
-    eco.store(ecoMode, std::memory_order_relaxed);
-    stretchDirty.store(true, std::memory_order_relaxed);
+    eco.store(ecoMode, std::memory_order_seq_cst);
+    stretchDirty.store(true, std::memory_order_seq_cst);
 }
 
 void Deck::setPositionSeconds(double seconds) {
-    const double rate = fileRate.load(std::memory_order_relaxed);
-    const int frames = infoFrames.load(std::memory_order_relaxed);
+    const double rate = fileRate.load(std::memory_order_seq_cst);
+    const int frames = infoFrames.load(std::memory_order_seq_cst);
     position.store(std::clamp(seconds * rate, 0.0, (double)std::max(0, frames - 1)),
-                   std::memory_order_relaxed);
+                   std::memory_order_seq_cst);
 }
 
 void Deck::setCuePointSeconds(double seconds) {
-    const double rate = fileRate.load(std::memory_order_relaxed);
-    const int frames = infoFrames.load(std::memory_order_relaxed);
+    const double rate = fileRate.load(std::memory_order_seq_cst);
+    const int frames = infoFrames.load(std::memory_order_seq_cst);
     cueFrame = std::clamp(seconds * rate, 0.0, (double)std::max(0, frames - 1));
 }
 
 double Deck::getCuePointSeconds() const {
-    const int frames = infoFrames.load(std::memory_order_relaxed);
+    const int frames = infoFrames.load(std::memory_order_seq_cst);
     if (frames <= 0)
         return 0.0;
-    return cueFrame / fileRate.load(std::memory_order_relaxed);
+    return cueFrame / fileRate.load(std::memory_order_seq_cst);
 }
 
 double Deck::getPositionSeconds() const {
-    return position.load(std::memory_order_relaxed)
-        / fileRate.load(std::memory_order_relaxed);
+    return position.load(std::memory_order_seq_cst)
+        / fileRate.load(std::memory_order_seq_cst);
 }
 
 double Deck::getLengthSeconds() const {
-    return (double)infoFrames.load(std::memory_order_relaxed)
-        / infoRate.load(std::memory_order_relaxed);
+    return (double)infoFrames.load(std::memory_order_seq_cst)
+        / infoRate.load(std::memory_order_seq_cst);
 }
 
 int Deck::getStretchLatency() const {
-    return stretchLatency.load(std::memory_order_relaxed);
+    return stretchLatency.load(std::memory_order_seq_cst);
 }
 
 float Deck::cubic(float y0, float y1, float y2, float y3, float t) {
@@ -101,21 +101,21 @@ float Deck::frame(const DeckBuffer& buf, int index, int channel) {
 }
 
 void Deck::adoptStaged() {
-    if (!stagedReady.load(std::memory_order_acquire))
+    if (!stagedReady.load(std::memory_order_seq_cst))
         return;
     std::unique_lock<std::mutex> lock(stageMutex, std::try_to_lock);
     if (!lock)
         return; // message thread is staging; retry next block, never block
     if (staged) {
         active = std::move(staged);
-        infoFrames.store(active->frames, std::memory_order_relaxed);
-        infoRate.store(active->rate, std::memory_order_relaxed);
+        infoFrames.store(active->frames, std::memory_order_seq_cst);
+        infoRate.store(active->rate, std::memory_order_seq_cst);
     }
-    stagedReady.store(false, std::memory_order_release);
+    stagedReady.store(false, std::memory_order_seq_cst);
 }
 
 void Deck::render(float* left, float* right, int numSamples) {
-    if (!playing.load(std::memory_order_relaxed) || !left || !right || numSamples <= 0)
+    if (!playing.load(std::memory_order_seq_cst) || !left || !right || numSamples <= 0)
         return;
 
     adoptStaged();
@@ -124,23 +124,23 @@ void Deck::render(float* left, float* right, int numSamples) {
     // render path can never observe a half-built stretcher. This performs a
     // bounded allocation, but only on user-initiated reconfigure
     // (load / keylock toggle / device rate change) — never in steady state.
-    if (stretchDirty.load(std::memory_order_relaxed)) {
-        stretchDirty.store(false, std::memory_order_relaxed);
-        if (keylock.load(std::memory_order_relaxed)) {
+    if (stretchDirty.load(std::memory_order_seq_cst)) {
+        stretchDirty.store(false, std::memory_order_seq_cst);
+        if (keylock.load(std::memory_order_seq_cst)) {
             const float rate =
-                (float)outputRate.load(std::memory_order_relaxed);
-            if (eco.load(std::memory_order_relaxed))
+                (float)outputRate.load(std::memory_order_seq_cst);
+            if (eco.load(std::memory_order_seq_cst))
                 stretch.presetCheaper(2, rate);
             else
                 stretch.presetDefault(2, rate);
             stretch.setTransposeSemitones(0.0f);
             stretch.reset();
             stretchLatency.store(stretch.inputLatency() + stretch.outputLatency(),
-                                 std::memory_order_relaxed);
-            stretchReady.store(true, std::memory_order_relaxed);
+                                 std::memory_order_seq_cst);
+            stretchReady.store(true, std::memory_order_seq_cst);
         } else {
-            stretchReady.store(false, std::memory_order_relaxed);
-            stretchLatency.store(0, std::memory_order_relaxed);
+            stretchReady.store(false, std::memory_order_seq_cst);
+            stretchLatency.store(0, std::memory_order_seq_cst);
         }
         stretchCarry = 0.0;
         tailOut = 0;
@@ -150,12 +150,12 @@ void Deck::render(float* left, float* right, int numSamples) {
     if (buf.frames == 0)
         return;
 
-    const double fileRateLocal = fileRate.load(std::memory_order_relaxed);
-    const double outputRateLocal = outputRate.load(std::memory_order_relaxed);
-    const double tempoLocal = tempo.load(std::memory_order_relaxed);
+    const double fileRateLocal = fileRate.load(std::memory_order_seq_cst);
+    const double outputRateLocal = outputRate.load(std::memory_order_seq_cst);
+    const double tempoLocal = tempo.load(std::memory_order_seq_cst);
 
-    if (keylock.load(std::memory_order_relaxed)
-        && stretchReady.load(std::memory_order_relaxed)) {
+    if (keylock.load(std::memory_order_seq_cst)
+        && stretchReady.load(std::memory_order_seq_cst)) {
         renderStretch(buf, left, right, numSamples);
         return;
     }
@@ -168,12 +168,12 @@ void Deck::render(float* left, float* right, int numSamples) {
 
 void Deck::renderResample(const DeckBuffer& buf, float* left, float* right,
                           int numSamples, double step) {
-    const float coeff = smoothCoeff(outputRate.load(std::memory_order_relaxed));
-    double pos = position.load(std::memory_order_relaxed);
+    const float coeff = smoothCoeff(outputRate.load(std::memory_order_seq_cst));
+    double pos = position.load(std::memory_order_seq_cst);
     for (int i = 0; i < numSamples; ++i) {
         if (pos >= buf.frames || !std::isfinite(pos)) {
-            position.store(pos, std::memory_order_relaxed);
-            playing.store(false, std::memory_order_relaxed);
+            position.store(pos, std::memory_order_seq_cst);
+            playing.store(false, std::memory_order_seq_cst);
             break;
         }
         const int idx = (int)pos;
@@ -187,17 +187,17 @@ void Deck::renderResample(const DeckBuffer& buf, float* left, float* right,
             * g;
         pos += step;
     }
-    position.store(pos, std::memory_order_relaxed);
+    position.store(pos, std::memory_order_seq_cst);
 }
 
 void Deck::renderStretch(const DeckBuffer& buf, float* left, float* right,
                          int numSamples) {
-    const double fileRateLocal = fileRate.load(std::memory_order_relaxed);
-    const double outputRateLocal = outputRate.load(std::memory_order_relaxed);
-    const double tempoLocal = tempo.load(std::memory_order_relaxed);
+    const double fileRateLocal = fileRate.load(std::memory_order_seq_cst);
+    const double outputRateLocal = outputRate.load(std::memory_order_seq_cst);
+    const double tempoLocal = tempo.load(std::memory_order_seq_cst);
     const float coeff = smoothCoeff(outputRateLocal);
     const double inputStep = fileRateLocal / outputRateLocal;
-    double pos = position.load(std::memory_order_relaxed);
+    double pos = position.load(std::memory_order_seq_cst);
     int done = 0;
     while (done < numSamples) {
         const int m = std::min(512, numSamples - done);
@@ -229,7 +229,7 @@ void Deck::renderStretch(const DeckBuffer& buf, float* left, float* right,
                 inL[j] = inR[j] = 0.0f;
             tailOut += m;
         }
-        position.store(pos, std::memory_order_relaxed);
+        position.store(pos, std::memory_order_seq_cst);
 
         float outL[512], outR[512];
         float* inB[2] = { inL, inR };
@@ -243,7 +243,7 @@ void Deck::renderStretch(const DeckBuffer& buf, float* left, float* right,
         done += m;
 
         if (eof && tailOut > stretch.outputLatency() + 512) {
-            playing.store(false, std::memory_order_relaxed);
+            playing.store(false, std::memory_order_seq_cst);
             break;
         }
     }

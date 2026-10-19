@@ -49,7 +49,7 @@ public:
     // keeps its previous track).
     void loadFile(int deck, const juce::String& path);
     int deckState(int deck) const {
-        return states[deck & 1].load(std::memory_order_acquire);
+        return states[deck & 1].load(std::memory_order_seq_cst);
     }
     juce::String deckName(int deck) const { return names[deck & 1]; }
     juce::String deckError(int deck) const { return errors[deck & 1]; }
@@ -176,8 +176,8 @@ public:
     // Library serializes against message-thread searches). Progress via
     // scanActive(), result count via scanCount() (-1 before any scan).
     void indexFolder(const juce::String& path);
-    bool scanActive() const { return scanning.load(std::memory_order_acquire); }
-    int scanCount() const { return lastScanCount.load(std::memory_order_relaxed); }
+    bool scanActive() const { return scanning.load(std::memory_order_seq_cst); }
+    int scanCount() const { return lastScanCount.load(std::memory_order_seq_cst); }
     std::vector<std::string> searchLibrary(const std::string& query) {
         ensureDb();
         return library.search(query);
@@ -260,7 +260,7 @@ public:
     void refreshFxScan();
     juce::StringArray fxPlugins() const { return fxList; } // message thread
     bool fxScanRunning() const {
-        return fxScanActive.load(std::memory_order_acquire);
+        return fxScanActive.load(std::memory_order_seq_cst);
     }
     void pumpFx() { fxRack.pumpRetired(); }
     void prepareFx(double rate) {

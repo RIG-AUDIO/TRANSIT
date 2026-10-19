@@ -50,7 +50,7 @@ private:
     std::thread writer;
 
     void* file = nullptr; // FILE*, writer thread only (void* keeps header clean)
-    // Writer thread stores; message thread reads for UI counters (relaxed).
+    // Writer thread stores; message thread reads for UI counters (seq_cst).
     std::atomic<long long> totalWritten{ 0 };
     double rate = 44100.0;
     std::string path;

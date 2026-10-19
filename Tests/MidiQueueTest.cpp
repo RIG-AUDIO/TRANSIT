@@ -63,7 +63,7 @@ void testConcurrentProducer() {
     std::thread producer([&] {
         for (uint64_t i = 1; i <= (uint64_t)kPush; ++i)
             q.push(i, 1, (int)(i % 128), 0.5f);
-        done.store(true, std::memory_order_release);
+        done.store(true, std::memory_order_seq_cst);
     });
     long long drained = 0;
     lean::MidiEvent ev[64];
@@ -77,7 +77,7 @@ void testConcurrentProducer() {
             lastFrame = ev[i].frame;
         }
         drained += n;
-        if (done.load(std::memory_order_acquire) && n == 0) {
+        if (done.load(std::memory_order_seq_cst) && n == 0) {
             const int tail = q.drain((uint64_t)kPush, ev, 64);
             drained += tail;
             if (tail == 0)
