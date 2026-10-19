@@ -222,7 +222,7 @@ private:
     void loadBrowserRow(int row);
     // G6 round 2: header-only duration probe for files that are not in the
     // library index (no full decode, no index write).
-    juce::String probeDuration(const juce::File& file) const;
+    juce::String probeDuration(const juce::File& file);
     void layoutDeck(DeckStrip& s, juce::Rectangle<int> panel);
     void applyEq(int deck);
     void updateDeckHeader(int deck);

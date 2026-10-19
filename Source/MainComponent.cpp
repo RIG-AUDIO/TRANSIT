@@ -867,7 +867,7 @@ void MainComponent::refreshBrowserList() {
     fileList.updateContent();
 }
 
-juce::String MainComponent::probeDuration(const juce::File& file) const {
+juce::String MainComponent::probeDuration(const juce::File& file) {
     // Header-only read: no sample data is decoded, no index is written.
     std::unique_ptr<juce::AudioFormatReader> reader(
         audioFormats.createReaderFor(file));
