@@ -894,7 +894,14 @@ void MainComponent::timerCallback() {
                             juce::dontSendNotification);
         refreshBrowserList();
     }
-    repaint();
+    // G8: targeted invalidation instead of one whole-window repaint — the
+    // deck waveforms (playheads ride this tick) and the output-meter well.
+    // Everything else in this callback already repaints itself: labels,
+    // sliders, tabs, channel VUs, the top-bar master strip.
+    for (auto& s : strips)
+        if (s.wave)
+            s.wave->repaint();
+    repaint(getLocalBounds().removeFromBottom(26));
 }
 
 void MainComponent::paint(juce::Graphics& g) {
