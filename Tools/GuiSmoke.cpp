@@ -22,7 +22,55 @@
 #include <cstdio>
 #include <vector>
 
+#if JUCE_LINUX
+ #include <X11/Xlib.h>
+#endif
+
 namespace {
+
+// ---------------------------------------------------------------------------
+// X11 atom seeding (bare-server fix).
+//
+// JUCE's juce_XWindowSystem_linux.cpp interns a set of WM/ICCCM/EWMH atoms
+// with XInternAtom(..., only_if_exists = true) in XWindowSystemUtilities::Atoms
+// and in getIfExists() call sites, then window creation passes atoms.protocols
+// ("WM_PROTOCOLS") to XChangeProperty unchecked. On a desktop some other
+// client has already created those atoms, but on a bare Xvfb server (no
+// window manager, no prior clients) they do not exist yet: the lookup
+// returns 0, the X server answers BadAtom, and its default error handler
+// aborts the process (exit 1) before any GUI code runs. Seeding every such
+// name with XInternAtom(..., False) on a short-lived connection makes them
+// exist for JUCE's own connection (atoms are server-global and persist).
+// ---------------------------------------------------------------------------
+#if JUCE_LINUX
+void seedX11Atoms() {
+    static const char* const kSeedNames[] = {
+        // Atoms ctor in juce_XWindowSystem_linux.cpp (getIfExists)
+        "WM_PROTOCOLS", "WM_TAKE_FOCUS", "WM_DELETE_WINDOW", "_NET_WM_PING",
+        "WM_CHANGE_STATE", "WM_STATE", "_NET_WM_WINDOW_TYPE", "_NET_WM_STATE",
+        "_NET_WM_STATE_HIDDEN", "_NET_WM_STATE_MAXIMIZED_HORZ",
+        "_NET_WM_STATE_MAXIMIZED_VERT",
+        // getIfExists call sites
+        "_NET_WM_STATE_FULLSCREEN", "_NET_WM_MOVERESIZE", "_NET_FRAME_EXTENTS",
+        "_NET_WORKAREA", "_MOTIF_WM_HINTS", "_WIN_HINTS", "KWM_WIN_DECORATION",
+        "_KDE_NET_WM_WINDOW_TYPE_OVERRIDE", "_NET_WM_ALLOWED_ACTIONS",
+        "_NET_WM_WINDOW_TYPE_COMBO", "_NET_WM_WINDOW_TYPE_NORMAL",
+        // addAtomIfExists call sites
+        "_NET_WM_ACTION_RESIZE", "_NET_WM_ACTION_FULLSCREEN",
+        "_NET_WM_ACTION_MINIMIZE", "_NET_WM_ACTION_CLOSE",
+        "_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_STATE_ABOVE",
+        // Xlib WMProps lookups also use only-if-exists semantics
+        "WM_NORMAL_HINTS", "WM_SIZE_HINTS",
+    };
+    if (Display* dpy = XOpenDisplay(nullptr)) {
+        for (const char* name : kSeedNames)
+            XInternAtom(dpy, name, False);
+        XCloseDisplay(dpy);
+    }
+}
+#else
+void seedX11Atoms() {}
+#endif
 
 struct Viewport {
     int w;
@@ -228,6 +276,9 @@ int main(int argc, char** argv) {
         std::printf("usage: GuiSmoke <output-dir>\n");
         return 2;
     }
+
+    // Must run before JUCE's XWindowSystem exists (see seedX11Atoms).
+    seedX11Atoms();
 
     juce::ScopedJuceInitialiser_GUI init;
     const juce::File outDir =

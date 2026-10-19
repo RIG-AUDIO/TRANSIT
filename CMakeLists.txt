@@ -436,6 +436,12 @@ target_compile_definitions(GuiSmoke PRIVATE
   JUCE_PLUGINHOST_VST3=1
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0)
+# seedX11Atoms() interns JUCE's only-if-exists WM atoms on bare X servers
+# (see the comment in Tools/GuiSmoke.cpp); needs libX11 directly.
+if(UNIX AND NOT APPLE)
+  find_package(X11 REQUIRED)
+  target_link_libraries(GuiSmoke PRIVATE X11::X11)
+endif()
 
 # Dev probe: end-to-end VST3 load/process/unload on this machine.
 juce_add_console_app(FxProbe)

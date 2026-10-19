@@ -34,6 +34,16 @@ writes nothing in that mode on some platforms. The CI gate therefore uses a
   **playing** state therefore shows transport UI in the playing state with a
   stationary playhead — no device, no clock advance. This is intentional and
   makes the shot deterministic.
+- **Bare-server atom seeding.** JUCE 9.0.1's X11 backend interns its
+  WM/ICCCM/EWMH atoms (`WM_PROTOCOLS`, `_NET_WM_STATE`, …) with
+  `XInternAtom(..., only_if_exists = true)` and passes `WM_PROTOCOLS`
+  to `XChangeProperty` unchecked at window creation. On a desktop some other
+  client has already created those atoms; on a bare Xvfb server they do not
+  exist, the lookup returns 0, and the server answers `BadAtom` (default
+  error handler aborts the process). `GuiSmoke` therefore interns every such
+  atom name on a short-lived connection first (`seedX11Atoms()`, before
+  JUCE's `XWindowSystem` exists) — atoms are server-global, so JUCE's own
+  connection finds them.
 
 Harness seams are thin wrappers on `MainComponent` (`harnessLoadFile`,
 `harnessPlay`, `harnessDeckState`, `harnessSetZoom`, `harnessShowFxPage`)
