@@ -977,13 +977,25 @@ void MainComponent::timerCallback() {
                             juce::dontSendNotification);
         refreshBrowserList();
     }
-    // G8: targeted invalidation instead of one whole-window repaint — the
-    // deck waveforms (playheads ride this tick) and the output-meter well.
+    // G8 (finish): targeted invalidation instead of one whole-window
+    // repaint — output-meter well every tick; each deck waveform only when
+    // a value it paints changed (load state or quantized playhead token:
+    // seek-while-paused still repaints, an idle loaded waveform stops
+    // re-rendering every tick; zoom changes repaint themselves, W4).
     // Everything else in this callback already repaints itself: labels,
     // sliders, tabs, channel VUs, the top-bar master strip.
-    for (auto& s : strips)
-        if (s.wave)
-            s.wave->repaint();
+    for (int d = 0; d < 2; ++d) {
+        const int st = engine.deckState(d);
+        // Quantized change token, not a measurement: truncation at 1 ns is
+        // irrelevant and keeps the comparison on integers.
+        const int64_t tok = (int64_t)(engine.getPositionSeconds(d) * 1.0e9);
+        if (st != waveStateSeen[d] || tok != wavePosSeen[d]) {
+            waveStateSeen[d] = st;
+            wavePosSeen[d] = tok;
+            if (strips[d].wave)
+                strips[d].wave->repaint();
+        }
+    }
     repaint(getLocalBounds().removeFromBottom(26));
 }
 

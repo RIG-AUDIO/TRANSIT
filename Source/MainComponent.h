@@ -282,4 +282,7 @@ private:
     float meterShown = 0.0f; // G4: dB-mapped unit (0..1)
     MeterHold meterHold;
     int statusAnimTick = 0; // G5: drives the LOADING... dot animation
+    // G8 finish: per-deck change tokens for waveform invalidation.
+    int waveStateSeen[2] = { -1, -1 };
+    int64_t wavePosSeen[2] = { 0, 0 };
 };

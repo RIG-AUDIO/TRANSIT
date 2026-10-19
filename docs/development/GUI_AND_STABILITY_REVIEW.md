@@ -484,7 +484,7 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   half-invented here — they are a deliverable of
   `GUI_DESIGN_SYSTEM.md`.
 
-### G8 — global 30 Hz whole-window repaint  (M3 start implemented; keeps growing with the redesign)
+### G8 — global 30 Hz whole-window repaint  (implemented in M3 + M6)
 - `startTimerHz(30)` + full `repaint()` (`Source/MainComponent.cpp:395`,
   `:773`).
 - **Fix:** keep one timer, but repaint only what changes (waveforms, meters,
@@ -496,9 +496,15 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   tick; this also keeps seek-while-paused visible, since no other call site
   repaints the waveform) plus the 26 px output-meter strip. Everything else
   updated in the callback already invalidates itself (labels, sliders,
-  tabs, channel VUs, master strip). Residual, documented: an idle *loaded*
-  waveform still re-renders every tick — gating that on position/state
-  change detection is deferred to the M5/M6 paint pass.
+  tabs, channel VUs, master strip).
+- **Fix (finish, implemented in M6):** the per-tick waveform invalidation
+  is now gated on change detection — each deck repaints only when its load
+  state or its (quantized, 1 ns) playhead-position token differs from the
+  previous tick. An idle *loaded* waveform stops re-rendering every tick,
+  while seek-while-paused, loads, and playing playheads all still repaint
+  (position tokens change). Zoom keeps its explicit W4 repaints. The
+  26 px output-meter strip and the channel VUs repaint every tick by
+  design (they decay continuously while audio runs).
 
 ### G9 — parked tabs  (keep as-is)
 - FX/SAMPLER/LOOP disabled with "Not in this build" tooltips
