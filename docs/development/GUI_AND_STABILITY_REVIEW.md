@@ -341,7 +341,7 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   read in paint remains single-threaded as required. Deck-side
   length/duration consistency is covered by `deckload_test`.
 
-### W8 — no zoom-state persistence or tests for the zoom table  (L — tests in M2, persistence in round 2)
+### W8 — no zoom-state persistence or tests for the zoom table  (L — tests in M2, persistence in rounds 2–3)
 - **Implemented:** the table and its helpers moved to the JUCE-free layer
   (`lean::kZoomSeconds`, `lean::clampZoomIndex`, `lean::zoomSpanSeconds`,
   shared by the view and the tests); `Tests/WaveformTest.cpp` pins
@@ -355,6 +355,17 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
   malformed input) are gated by `Tests/UiStateTest.cpp` instead of
   living inside the UI. A zoom change (button, wheel or programmatic
   set) writes the settings file; startup restores the stored index.
+- **Round 3 (W9, implemented):** the rest of the deferred cross-session
+  state — the browser's scroll position (`scroll=`, stored in permille
+  of the list's scroll range, applied once after the first population)
+  and per-file zoom memory (`filezoom=<path>|<idx>`, most-recent entry
+  wins, capped at 64 so the file cannot grow with the library). Every
+  deck load funnels through `MainComponent::requestLoad`, which applies
+  a stored zoom when one exists (a file without an entry keeps the
+  deck's current zoom) and remembers the path as the memory key; the
+  destructor writes the settings file so a session that only scrolled
+  still persists it. The parse/serialize rules stay JUCE-free and are
+  gated by the extended `uistate_test`.
 - Zoom table `{4,8,16,32,64,128,256,whole}` already matches the assignment
   (`Source/MainComponent.h:39-41`, default 32 s); add tests that the index
   clamps at both ends and that "whole" (`0.0`) maps to full duration.
@@ -609,6 +620,7 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 | **M5 — Mixer + browser** | G3(partial), G6, S6 UX follow-through | screenshots + library tests |
 | **M6 — Polish & validation** | G3(final), G8(finish), viewport/high-DPI sweep, docs (`WAVEFORM_ARCHITECTURE.md`, `GUI_DESIGN_SYSTEM.md`, `CI_VISUAL_TESTING.md`, `DEVELOPMENT_REPORT.md`) | full-matrix final run, artifacts archived, PR left open |
 | **Round 2 — metadata & zoom state** | G6 (BPM/duration columns), W8 (zoom persistence) | `library_test` + `uistate_test` green, GUI smoke frames show the new columns |
+| **Round 3 — scroll & per-file zoom memory (W9)** | W8 residual (browser scroll, per-file zoom) | extended `uistate_test` green, smoke frames unchanged |
 
 Out of scope by rule: loops/samplers/hotcues features, dependency major
 upgrades, merges to `main`, releases.

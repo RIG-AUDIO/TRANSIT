@@ -91,7 +91,12 @@ plus `WaveformView::setZoomIndex`; behavior stays in the engine/view classes.
   `harnessSetBrowserPath(outDir)` (G6), so every frame also shows the
   two fixture rows with metadata columns (name, tempo, duration, folder,
   size, date — the tempo is `—` because the fixture tracks are not in the
-  library index) and the selection pill.
+  library index) and the selection pill. Frames stay deterministic under
+  the W9 persistence rules: the fixtures are loaded before any zoom
+  change and no file is reloaded mid-run, so the per-file zoom memory
+  never applies during a run, and the stored browser scroll is 0 on a
+  fresh runner (settings written at exit or by the lifecycle cycles hold
+  defaults — the harness's final zoom is the default index 3).
 4. **Phase-1 validation per frame** (any failure exits non-zero and fails
    the job):
    - file exists and is non-empty,

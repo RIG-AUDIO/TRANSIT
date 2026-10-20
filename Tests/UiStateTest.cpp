@@ -50,6 +50,62 @@ int main() {
     const UiState spaces = lean::parseUiState("zoom0= 5 \n");
     check(spaces.zoom[0] == 5, "tolerates surrounding spaces");
 
+    // W9: browser scroll position, stored in permille.
+    check(lean::parseUiState("scroll=42\n").scroll == 42, "parses scroll");
+    check(lean::parseUiState("scroll=-5\n").scroll == 0,
+          "negative scroll keeps the default");
+    check(lean::parseUiState("scroll=abc\n").scroll == 0,
+          "malformed scroll keeps the default");
+    check(lean::parseUiState("scroll=5000\n").scroll == 1000,
+          "scroll clamps to 1000 permille");
+
+    // W9: per-file zoom memory.
+    const UiState files = lean::parseUiState(
+        "filezoom=/a/b.wav|4\nfilezoom=/a=c/d e.wav|2\n");
+    check(files.fileZoom.size() == 2, "parses two filezoom lines");
+    const int* zb = lean::findFileZoom(files, "/a/b.wav");
+    check(zb != nullptr && *zb == 4, "finds the stored file zoom");
+    const int* zd = lean::findFileZoom(files, "/a=c/d e.wav");
+    check(zd != nullptr && *zd == 2, "path with '=' and spaces stays intact");
+    check(lean::findFileZoom(files, "/a/nope.wav") == nullptr,
+          "unknown file has no memory");
+
+    const UiState bad = lean::parseUiState(
+        "filezoom=nopipe\nfilezoom=|4\nfilezoom=/x|\nfilezoom=/y|9\n"
+        "filezoom=/z|-2\n");
+    check(bad.fileZoom.size() == 2, "malformed filezoom lines are dropped");
+    const int* y = lean::findFileZoom(bad, "/y");
+    check(y != nullptr && *y == 7, "stored zoom clamps to the table (high)");
+    const int* z = lean::findFileZoom(bad, "/z");
+    check(z != nullptr && *z == 0, "stored zoom clamps to the table (low)");
+
+    const UiState dedup = lean::parseUiState(
+        "filezoom=/same.wav|1\nfilezoom=/same.wav|6\n");
+    check(dedup.fileZoom.size() == 1, "a repeated path keeps one entry");
+    const int* same = lean::findFileZoom(dedup, "/same.wav");
+    check(same != nullptr && *same == 6, "the newest record wins");
+
+    std::string many;
+    for (int i = 0; i < 70; ++i)
+        many += "filezoom=/f" + std::to_string(i) + "|1\n";
+    const UiState capped = lean::parseUiState(many);
+    check(capped.fileZoom.size() == lean::kMaxFileZoomEntries,
+          "file memory is capped");
+    check(capped.fileZoom.front().first == "/f6" && !lean::findFileZoom(capped, "/f5"),
+          "the oldest entries are dropped first");
+
+    const UiState round2 = lean::parseUiState(lean::serializeUiState(files));
+    check(round2.scroll == 0 && round2.fileZoom.size() == 2
+              && lean::findFileZoom(round2, "/a=b/d e.wav") != nullptr,
+          "filezoom serialize/parse round trip");
+
+    const UiState round3 = lean::parseUiState(
+        lean::serializeUiState(lean::UiState{ { 1, 6 }, 17, { { "/p q.wav", 3 } } }));
+    check(round3.zoom[0] == 1 && round3.zoom[1] == 6 && round3.scroll == 17,
+          "full state round trip (zooms + scroll)");
+    const int* pq = lean::findFileZoom(round3, "/p q.wav");
+    check(pq != nullptr && *pq == 3, "full state round trip (file zoom)");
+
     if (failures == 0)
         std::printf("UISTATE_TEST PASS\n");
     else

@@ -291,11 +291,13 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
             s.knobCaps[k].setVisible(d == 0);
         }
         s.wave = std::make_unique<WaveformView>(engine, d);
-        // W8: persist the zoom index whenever it changes (button, wheel or
-        // programmatic set).
-        s.wave->onZoomChanged = [this] {
-            if (!suppressZoomSave)
-                saveSettings();
+        // W8/W9: persist the zoom index whenever it changes (button, wheel
+        // or programmatic set) and remember it under the deck's file.
+        s.wave->onZoomChanged = [this, d] {
+            if (suppressZoomSave)
+                return;
+            rememberFileZoom(d);
+            saveSettings();
         };
         addAndMakeVisible(s.wave.get());
         s.zoomInBtn.onClick = [this, d] {
@@ -565,6 +567,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
 }
 
 MainComponent::~MainComponent() {
+    saveSettings(); // W9: capture browser scroll + per-file zoom at exit
     setLookAndFeel(nullptr);
 }
 
@@ -632,7 +635,7 @@ void MainComponent::openFile(int deck) {
                 return;
             // Async: the status line follows engine.deckState() from the
             // 30 Hz timer (Loading -> filename or error).
-            engine.loadFile(deck, file.getFullPathName());
+            requestLoad(deck, file.getFullPathName());
         });
 }
 
@@ -689,12 +692,14 @@ void MainComponent::loadSettings() {
     juce::StringArray auxPaths;
     if (f.existsAsFile()) {
         const auto text = f.loadFileAsString();
-        // W8: restore the per-deck zoom index (unknown or malformed values
-        // keep the defaults).
-        const auto ui = lean::parseUiState(text.toStdString());
+        // W8/W9: restore the per-deck zoom index, the browser top row and
+        // the per-file zoom memory (unknown or malformed values keep the
+        // defaults).
+        uiState = lean::parseUiState(text.toStdString());
+        pendingScroll = uiState.scroll;
         suppressZoomSave = true;
         for (int d = 0; d < 2; ++d)
-            strips[d].wave->setZoomIndex(ui.zoom[d]);
+            strips[d].wave->setZoomIndex(uiState.zoom[d]);
         suppressZoomSave = false;
         for (const auto& ln : juce::StringArray::fromLines(text)) {
             if (ln.startsWith("mode="))
@@ -734,10 +739,14 @@ void MainComponent::saveSettings() {
     text += juce::String("keyEco=") + (engine.keylockEco() ? "1" : "0") + "\n";
     for (int a = 0; a < 4; ++a)
         text += "aux" + juce::String(a) + "=" + engine.auxPath(a) + "\n";
-    // W8: the per-deck zoom index is part of the cross-session UI state.
-    lean::UiState ui;
+    // W8/W9: cross-session UI state — live zoom per deck, live browser
+    // scroll (permille of the list's scroll range), and the accumulated
+    // per-file zoom memory.
+    lean::UiState ui = uiState;
     for (int d = 0; d < 2; ++d)
         ui.zoom[d] = strips[d].wave ? strips[d].wave->getZoomIndex() : 3;
+    ui.scroll = juce::jlimit(
+        0, 1000, (int)(fileList.getVerticalPosition() * 1000.0 + 0.5));
     text += juce::String(lean::serializeUiState(ui));
     const auto f = settingsFile();
     f.getParentDirectory().createDirectory();
@@ -865,6 +874,13 @@ void MainComponent::refreshBrowserList() {
         fileModel.rows.push_back(std::move(row));
     }
     fileList.updateContent();
+    // W9: apply the stored list position once, after the first real
+    // population (an empty refresh keeps it pending for the next one).
+    // setVerticalPosition is a no-op when every row already fits.
+    if (pendingScroll >= 0 && !fileModel.rows.empty()) {
+        fileList.setVerticalPosition((double)pendingScroll / 1000.0);
+        pendingScroll = -1;
+    }
 }
 
 juce::String MainComponent::probeDuration(const juce::File& file) {
@@ -881,7 +897,27 @@ void MainComponent::loadBrowserRow(int row) {
         return;
     const int deck = toB.getToggleState() ? 1 : 0;
     const juce::File file(fileModel.rows[(size_t)row].path);
-    engine.loadFile(deck, file.getFullPathName()); // async; status via timer
+    requestLoad(deck, file.getFullPathName()); // async; status via timer
+}
+
+void MainComponent::requestLoad(int deck, const juce::String& path) {
+    deckPath[deck & 1] = {};
+    // Applying a stored zoom must not be mistaken for a user zoom change
+    // (it would re-record the entry it just read).
+    suppressZoomSave = true;
+    if (const int* z = lean::findFileZoom(uiState, path.toStdString()))
+        strips[deck & 1].wave->setZoomIndex(*z);
+    suppressZoomSave = false;
+    deckPath[deck & 1] = path;
+    engine.loadFile(deck, path);
+}
+
+void MainComponent::rememberFileZoom(int deck) {
+    const juce::String& p = deckPath[deck & 1];
+    if (p.isEmpty() || !strips[deck & 1].wave)
+        return;
+    lean::putFileZoom(uiState, p.toStdString(),
+                      strips[deck & 1].wave->getZoomIndex());
 }
 
 juce::String MainComponent::formatTime(double seconds) const {

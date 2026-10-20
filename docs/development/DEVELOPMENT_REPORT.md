@@ -41,6 +41,7 @@ point. Branch `feat/gui-waveform-stability`, draft PR
 | M6 report (this file) | see PR #1 checks | see PR #1 checks | see §7 |
 | Promotion to `main` (merge commit) | `02bdc10` | 39323566806 | success |
 | Round 2 — metadata columns + zoom state | see PR #2 | see PR #2 | see §11 |
+| Round 3 — browser scroll + per-file zoom memory (W9) | see PR #2 | see PR #2 | see §12 |
 
 Red-run history (all before the current streak): 9 red runs total —
 `ff769bd`/39129895367, `6e7c362`/39161205557, `fb9ec0d`/39166640510,
@@ -80,8 +81,10 @@ aesthetic judgement of the frames remains a human step (phase-2 list in
   documented as intended behaviour. **S12** — not defects.
 - **W1–W6, W8** — implemented and gated by WaveformTest (~42 named
   checks) in M2. **W7** — verified keep. **W8 persistence** was out of
-  scope for the original milestones and is implemented in round 2
-  (`Source/UiState.h` + `Tests/UiStateTest.cpp`, see §11).
+  scope for the original milestones: round 2 covers the per-deck zoom
+  index (`Source/UiState.h` + `Tests/UiStateTest.cpp`, see §11) and
+  round 3 the W9 remainder — browser scroll + per-file zoom memory
+  (§12).
 - **G1** (badge) M3 · **G2/G7** (tokens/colours) M3 · **G3** window floor
   M4 + coverage M6 (default-windowed vs fullscreen = human decision,
   fullscreen kept) · **G4** meters M4 · **G5** status row M4 · **G6**
@@ -134,9 +137,11 @@ latest run was green, and its run ID is cited in the delivery message.
 - **gui-smoke** prints expected X11 warnings (documented); snapshot
   content is validated by the harness assertions, not by an image
   comparator with golden files.
-- **Wave zoom (W8)** persists across sessions as of round 2 (§11); the
-  stored value is the zoom index only (no scroll offset, no per-file
-  memory).
+- **Wave zoom (W8)** persists across sessions as of round 2 (§11), and
+  round 3 adds the W9 remainder (§12): the browser scroll position and
+  per-file zoom memory. Not covered: per-file *scroll* memory (the wave
+  window is playhead-following, so there is no independent scroll to
+  store) and zoom entries for files outside the 64-entry cap.
 - The app binary a human runs locally may be an older artifact; always
   re-download `transit-linux-x64-release` from the latest green run.
 - The promoted `main` branch and this round-2 branch are **not**
@@ -225,3 +230,41 @@ Green runs on the branch: `39331366919` (all 8 jobs, 11m35s) and
    codepoint directly. Verified in the `39387321847` shots: a clean em
    dash at both 1920x1080 and 1100x824, with `0:08` durations, folder,
    size and date columns all present.
+
+## 12. Round 3 — browser scroll and per-file zoom memory (W9)
+
+Scope: the W8 residual from §8 — "the stored value is the zoom index
+only (no scroll offset, no per-file memory)" — on the same branch and
+PR as round 2 (the wave window itself is playhead-following, so there
+is no independent wave scroll to store; the scroll state that exists is
+the browser list's).
+
+- **Browser scroll (`scroll=`).** JUCE's `ListBox` exposes its position
+  as a proportion (`getVerticalPosition` / `setVerticalPosition`), so
+  the settings file stores permille (0–1000, integer, clamped at
+  parse time) rather than a row index. The stored value is applied
+  once, after the first real list population (`pendingScroll` waits
+  through empty refreshes); `setVerticalPosition` is a no-op when every
+  row already fits. The destructor now writes the settings file, so a
+  session that only scrolled still persists the position.
+- **Per-file zoom memory (`filezoom=<path>|<idx>`).** Split on the last
+  `|` (paths with `=` or spaces survive; a line without a valid zoom is
+  dropped, a zoom outside the table clamps). Repeated paths keep one
+  entry — the newest wins — and the store is capped at 64 most-recent
+  entries so the file cannot grow with the library. Every deck load
+  now funnels through `MainComponent::requestLoad`: a stored zoom
+  applies at request time (with the save suppressed so the restore is
+  not re-recorded), while a file without an entry keeps the deck's
+  current zoom; the requested path becomes the memory key that later
+  zoom changes record under.
+- **Why the shape:** the rules live in the JUCE-free `Source/UiState.h`
+  next to the round-2 zoom rules, so the whole thing is gated by the
+  extended `Tests/UiStateTest.cpp` (parse defaults, negative/garbage
+  scroll, permille clamp, path fidelity, malformed-line drops, table
+  clamps, dedupe, 64-entry eviction order, full round trip) without a
+  message loop.
+- **Smoke impact:** none. The fixtures are loaded before any zoom
+  change and no file reloads mid-run, so the memory never applies
+  during a run; the harness's final zoom is the default index, so even
+  settings written by the lifecycle cycles or at exit hold values
+  identical to fresh defaults. Documented in `CI_VISUAL_TESTING.md`.

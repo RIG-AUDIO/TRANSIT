@@ -29,7 +29,7 @@ public:
     // wrappers so Tools/GuiSmoke.cpp can drive deterministic UI states
     // without reaching into private members. No behavior lives here.
     void harnessLoadFile(int deck, const juce::String& path) {
-        engine.loadFile(deck, path);
+        requestLoad(deck, path);
     }
     void harnessPlay(int deck, bool p) { engine.play(deck, p); }
     int harnessDeckState(int deck) const { return engine.deckState(deck); }
@@ -218,6 +218,10 @@ private:
     juce::File settingsFile() const;
     void loadSettings();
     void saveSettings();
+    // W9: every deck load funnels through here — applies the per-file zoom
+    // memory and remembers the path as the memory key for later zoom changes.
+    void requestLoad(int deck, const juce::String& path);
+    void rememberFileZoom(int deck);
     void refreshBrowserList();
     void loadBrowserRow(int row);
     // G6 round 2: header-only duration probe for files that are not in the
@@ -303,6 +307,15 @@ private:
     // W8: set while the stored zoom index is restored at startup, so the
     // restore itself does not write the settings file back.
     bool suppressZoomSave = false;
+    // W9: parsed settings state — the per-file zoom store lives here; the
+    // zoom/scroll fields are re-read from the views at save time.
+    lean::UiState uiState;
+    // W9: stored browser scroll position (permille of the list's scroll
+    // range), applied once after the first real population (-1 = nothing
+    // to restore).
+    int pendingScroll = -1;
+    // W9: full path requested per deck — the key for the zoom memory.
+    juce::String deckPath[2];
     // G8 finish: per-deck change tokens for waveform invalidation.
     int waveStateSeen[2] = { -1, -1 };
     int64_t wavePosSeen[2] = { 0, 0 };
