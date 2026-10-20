@@ -42,6 +42,7 @@ point. Branch `feat/gui-waveform-stability`, draft PR
 | Promotion to `main` (merge commit) | `02bdc10` | 39323566806 | success |
 | Round 2 — metadata columns + zoom state | see PR #2 | see PR #2 | see §11 |
 | Round 3 — browser scroll + per-file zoom memory (W9) | see PR #2 | see PR #2 | see §12 |
+| Round 4 — mixer visual upgrade + bipolar EQ fill fix | see PR #2 | see PR #2 | see §13 |
 
 Red-run history (all before the current streak): 9 red runs total —
 `ff769bd`/39129895367, `6e7c362`/39161205557, `fb9ec0d`/39166640510,
@@ -282,3 +283,50 @@ nondeterministic regions documented in `CI_VISUAL_TESTING.md` (clock,
 master ring, bottom bar, mixer meters) — the same regions in which two
 *pre-round-3* runs differ from each other by twice as many pixels
 (1302 vs 686). Round 3 changed no rendered content.
+
+## 13. Round 4 — mixer visual upgrade and bipolar EQ fill fix
+
+Manual review of the round-2/3 release binary reported three defects:
+the EQ knobs' displayed value was wrong at rest, a control was
+misaligned, and the mixer section did not match the design level of the
+upgraded header/browser. Round 4 (`f6fb870`) fixes all three.
+
+**The value defect.** `DJLook::drawRotarySlider`'s bipolar branch
+remapped the *pointer* angle so a skewed EQ range (-24..+6 dB, detent at
+proportion 0.8) still points at 12 o'clock for 0 dB — but the *fill* arc
+was drawn to the raw angle. At rest that raw angle sits 0.3 of the sweep
+past the detent, so every EQ knob painted a phantom boost arc from
+12:00 to ~2:40 while showing a flat 0 dB. The fill now follows the
+remapped pointer angle: flat renders an empty fill, cut and boost grow
+symmetrically outward from the detent.
+
+**The misalignment.** The `BLEND` caption was placed at the top of the
+crossfader column, which at 1080p was 318 px tall — the caption floated
+~124 px above its knob. The xfade row is now a compact 58 px band pinned
+to the bottom of the mixer column (DJM-style), with the caption (14 px)
+hugging the knob (44 px) and the XFADE label centred on the groove. The
+row height is clamped to the available space so the 824 px CI floor
+cannot overlap the faders.
+
+**The design gap.** The mixer joined the glass-panel language
+(`GlassPanel` backdrop, inset 10x8, matching TopBar/browser). Knobs lost
+the near-white plastic discs for dark console bodies with lit rims,
+subtler arc tracks (ink@14%, 4 px), and short amber indicators. Faders
+gained recessed wells with hairline rims and dark caps with amber
+indicator lines (was a plain white pill), and the channel faders became
+long-throw (row 160–320 px, fader following the row height). The change
+also restyles every other slider consumer (deck tempo, TopBar
+MASTER/PHONES, FX-page sends, crossfader) consistently.
+
+**Round 4 CI history.** One push, one run: **`39414595074` — all 8
+jobs, 17m04s** (identity, gcc/clang × Debug/Release, ASan+UBSan,
+TSan, GUI smoke). Zero red runs; zero correction rounds.
+
+**Shot verification.** All 29 frames from `39414595074` were reviewed:
+EQ knobs render an empty fill with pointers up at rest; the glass
+panel, dark knobs, long-throw faders, bottom-pinned xfade row and
+hugging BLEND caption appear at every viewport including the 1100x824
+CI floor (no overlap); TopBar MASTER/PHONES knobs picked up the same
+dark-body language. The brightness floor in the harness is unaffected
+(dark knobs replaced a small bright area; frames remain far above the
+0.1% all-dark threshold).

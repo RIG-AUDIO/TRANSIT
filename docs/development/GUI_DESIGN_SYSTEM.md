@@ -59,11 +59,15 @@ are still token-bound (`ink`/`dimInk`/`alarm`/`accent` as roleled below).
 
 | Radius | Where |
 |---|---|
-| 1 px (stroke) | lit borders, button outlines (1.5 px when highlighted), glass top highlight |
-| 2 px | slider thumbs and grooves (`DJLook::drawLinearSlider`) |
-| 3 px | meter well + meter fill, small wells |
+| 1 px (stroke) | lit borders, button outlines (1.5 px when highlighted), glass top highlight, hairline rims on slider wells/caps and knob bodies |
+| 2 px | small fills (fader groove accent, cap indicator line) |
+| 3 px | meter well + meter fill, small wells, slider groove wells (6 px wide), fader caps (34x12) and round thumbs (14 px) |
 | **4 px** | house radius: glass panels (TopBar, `GlassPanel`), their lit borders, FileList selection pill, list-row pills |
 | 5 px | button/combo bodies, expanded hover halo (`area.expanded(2.0f)`) |
+
+Knob arcs (`DJLook::drawRotarySlider`): track and fill stroke 4 px,
+track `ink@14%`, fill `accent`; body `panel.brighter(0.12)` at 0.58r with
+an `ink@20%` rim; pointer `accent` from 0.12r to 0.50r.
 
 ## 5. Spacing / structure (layout constants)
 
@@ -75,8 +79,10 @@ are still token-bound (`ink`/`dimInk`/`alarm`/`accent` as roleled below).
 - Deck column: header row 28, button row 30 (`Open 64 / Play 52 / CUE 52 /
   Key 52`, gaps 5), status row 22 (**state chip 86** + payload), time row
   20 (`←/→` 40), tempo row 30, waveform fills the rest; region gap 12.
-- Mixer: header 28, channel-cap row 18 (cap column 56), knob rows 44,
-  fader row 190, channel VUs 14 px wide.
+- Mixer: glass panel (inset 10x8), header 28, channel-cap row 18 (cap
+  column 56), knob rows 44, channel fader row 160–320 (grows with the
+  window; long-throw faders follow the row height), xfade row 58 pinned
+  to the bottom (BLEND caption 14 + knob 44), channel VUs 14 px wide.
 - Browser: fixed 220 px band + 8 px gap; meter strip zone 34 px (paint
   area 26 px, inset 12×7, radius 3); page reserves 34 px at the bottom.
 - Overview stripe: 14 px, only when the waveform view is ≥48 px tall.
@@ -116,6 +122,17 @@ are still token-bound (`ink`/`dimInk`/`alarm`/`accent` as roleled below).
   show `—` for an unknown tempo. The metadata columns drop out on narrow
   lists (time < 640 px, bpm < 760 px, folder < 320 px, size/date < 480 px)
   instead of clipping the file name.
+- **Mixer** — glass-panel backdrop (TopBar/browser language), DJM-style
+  vertical order: `MIXER` header, A/B channel caps, four knob rows
+  (GAIN/LOW/MID/HIGH; captions left, `dimInk`), PFL + long-throw channel
+  faders with channel VUs, crossfader row pinned to the bottom (`XFADE`
+  groove + `BLEND` knob, caption hugging the knob). Knobs render as dark
+  console bodies with amber arcs; bipolar EQ knobs fill symmetrically
+  outward from 12 o'clock (flat = empty fill; the fill follows the
+  remapped pointer angle so the skewed -24..+6 dB range cannot paint a
+  phantom arc at the 0 dB detent). Faders sit in a recessed `deep` well
+  with a hairline rim; caps are dark with a lit rim and an amber
+  indicator line.
 - **Decks** — waveform view with overview stripe, `−/+` zoom (4 s…whole),
   `SYNC`, transport (`Play/CUE/Key`), tempo/gain/EQ/fader controls in the
   mixer; drop target + `Drop a track - double-click the library` hint.

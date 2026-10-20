@@ -621,6 +621,7 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 | **M6 — Polish & validation** | G3(final), G8(finish), viewport/high-DPI sweep, docs (`WAVEFORM_ARCHITECTURE.md`, `GUI_DESIGN_SYSTEM.md`, `CI_VISUAL_TESTING.md`, `DEVELOPMENT_REPORT.md`) | full-matrix final run, artifacts archived, PR left open |
 | **Round 2 — metadata & zoom state** | G6 (BPM/duration columns), W8 (zoom persistence) | `library_test` + `uistate_test` green, GUI smoke frames show the new columns |
 | **Round 3 — scroll & per-file zoom memory (W9)** | W8 residual (browser scroll, per-file zoom) | extended `uistate_test` green, smoke frames unchanged |
+| **Round 4 — mixer visual upgrade (aesthetic sign-off)** | user review: bipolar EQ fill bug at detent, BLEND caption misalignment, mixer design language vs header/browser | green run 39414595074; frames show empty EQ fill at rest, glass panel, dark knobs, caption alignment |
 
 Out of scope by rule: loops/samplers/hotcues features, dependency major
 upgrades, merges to `main`, releases.
