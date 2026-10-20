@@ -859,7 +859,7 @@ void MainComponent::refreshBrowserList() {
                 row.time = formatTime(it->second.seconds);
         }
         if (row.bpm.isEmpty())
-            row.bpm = "\xE2\x80\x94"; // em dash: tempo unknown
+            row.bpm = juce::String::charToString(0x2014); // em dash: tempo unknown
         if (row.time.isEmpty())
             row.time = probeDuration(f);
         fileModel.rows.push_back(std::move(row));
