@@ -142,3 +142,16 @@ xvfb-run -a -s "-screen 0 2560x1440x24" \
 `<build>/<target>_artefacts/<CONFIG>/`.)
 
 Exit code 0 and a final `GUI_SMOKE ok` line mean all frames passed phase 1.
+
+**Cross-run pixel comparisons.** Byte-comparing PNGs from two different
+runs is meaningless: four elements are legitimately nondeterministic
+run-to-run — the top-bar clock (HH:MM), the master history ring's leading
+edge, the bottom master bar's gradient edge, and the mixer meter column
+(peak-hold decay phase; x at the window centre, y ≈ 358–380). Two runs of
+*identical* code differ by ~1300 pixels in those regions (plus ~116 clock
+pixels). A content-neutrality check must therefore mask: `y < 50`,
+`y > 1050`, and the top-right `200×40` clock box — and the harness's own
+phase-1 gate (dimensions + brightness fraction) already tolerates all of
+them. This was established while verifying that round 3 (W9) changed no
+frames: W9-vs-pre differed *less* (686 px, all in the masked regions)
+than pre-vs-pre (1302 px).

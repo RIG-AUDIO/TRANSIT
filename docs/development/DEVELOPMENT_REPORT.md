@@ -268,3 +268,17 @@ the browser list's).
   during a run; the harness's final zoom is the default index, so even
   settings written by the lifecycle cycles or at exit hold values
   identical to fresh defaults. Documented in `CI_VISUAL_TESTING.md`.
+
+**Round 3 CI history.** One red run, fixed within budget:
+`39396130385` failed only `uistate_test` — a fixture-path typo in the new
+serialize/parse round-trip check (`/a=b/…` looked up where the input
+wrote `/a=c/…`); fixed in `8b285ac`. The suite then ran green end-to-end:
+**`39398458300` — all 8 jobs, 16m08s**, with the extended `uistate_test`
+also passing under ASan+UBSan.
+
+**Shot verification.** The 29 frames were pixel-diffed against the last
+pre-round-3 green run. Differences are confined to the four
+nondeterministic regions documented in `CI_VISUAL_TESTING.md` (clock,
+master ring, bottom bar, mixer meters) — the same regions in which two
+*pre-round-3* runs differ from each other by twice as many pixels
+(1302 vs 686). Round 3 changed no rendered content.
