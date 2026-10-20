@@ -264,6 +264,7 @@ private:
         lean::MidiTarget target;
     };
     std::optional<PendingLearn> pending;
+    GlassPanel mixerGlass;
     juce::Label mixerCaps[3];
     juce::Label mixerHeader;
     juce::Label chanCaps[2];

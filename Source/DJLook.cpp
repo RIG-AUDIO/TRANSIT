@@ -93,27 +93,44 @@ void DJLook::drawLinearSlider(juce::Graphics& g, int x, int y, int width, int he
                               const juce::Slider::SliderStyle style,
                               juce::Slider&) {
     const bool vertical = style == juce::Slider::LinearVertical;
-    g.setColour(panel.brighter(0.15f));
     if (vertical) {
         const int cx = x + width / 2;
-        g.fillRoundedRectangle((float)cx - 2.0f, (float)y, 4.0f, (float)height, 2.0f);
+        // Recessed well under the groove.
+        g.setColour(deep);
+        g.fillRoundedRectangle((float)cx - 3.0f, (float)y, 6.0f, (float)height, 3.0f);
+        g.setColour(ink.withAlpha(0.10f));
+        g.drawRoundedRectangle((float)cx - 3.0f, (float)y, 6.0f, (float)height, 3.0f,
+                               1.0f);
         g.setColour(accent);
         const float top = juce::jmin(sliderPos, (float)(y + height));
-        g.fillRoundedRectangle((float)cx - 2.0f, top, 4.0f, (float)(y + height) - top, 2.0f);
-        // Slim hardware cap, fixed width regardless of slider bounds.
-        g.setColour(ink);
-        g.fillRoundedRectangle((float)cx - 17.0f, sliderPos - 5.0f, 34.0f, 10.0f,
-                               3.0f);
+        g.fillRoundedRectangle((float)cx - 2.0f, top, 4.0f,
+                               (float)(y + height) - top, 2.0f);
+        // Dark hardware cap with a lit rim and an amber indicator line.
+        const float capY = sliderPos - 6.0f;
+        g.setColour(panel.brighter(0.18f));
+        g.fillRoundedRectangle((float)cx - 17.0f, capY, 34.0f, 12.0f, 3.0f);
+        g.setColour(ink.withAlpha(0.25f));
+        g.drawRoundedRectangle((float)cx - 17.0f, capY, 34.0f, 12.0f, 3.0f, 1.0f);
+        g.setColour(accent);
+        g.fillRoundedRectangle((float)cx - 11.0f, sliderPos - 1.0f, 22.0f, 2.0f,
+                               1.0f);
     } else {
         const int cy = y + height / 2;
-        g.fillRoundedRectangle((float)x, (float)cy - 2.0f, (float)width, 4.0f, 2.0f);
+        g.setColour(deep);
+        g.fillRoundedRectangle((float)x, (float)cy - 3.0f, (float)width, 6.0f, 3.0f);
+        g.setColour(ink.withAlpha(0.10f));
+        g.drawRoundedRectangle((float)x, (float)cy - 3.0f, (float)width, 6.0f, 3.0f,
+                               1.0f);
         g.setColour(accent);
         g.fillRoundedRectangle((float)x, (float)cy - 2.0f, sliderPos - (float)x, 4.0f,
                                2.0f);
-        g.setColour(ink);
-        g.fillEllipse(sliderPos - 6.0f, (float)cy - 6.0f, 12.0f, 12.0f);
+        // Round cap, dark with a lit rim and amber centre.
+        g.setColour(panel.brighter(0.18f));
+        g.fillEllipse(sliderPos - 7.0f, (float)cy - 7.0f, 14.0f, 14.0f);
+        g.setColour(ink.withAlpha(0.25f));
+        g.drawEllipse(sliderPos - 7.0f, (float)cy - 7.0f, 14.0f, 14.0f, 1.0f);
         g.setColour(accent);
-        g.fillEllipse(sliderPos - 3.0f, (float)cy - 3.0f, 6.0f, 6.0f);
+        g.fillEllipse(sliderPos - 3.5f, (float)cy - 3.5f, 7.0f, 7.0f);
     }
 }
 
@@ -126,8 +143,8 @@ void DJLook::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int he
     juce::Path track;
     track.addCentredArc(cx, cy, radius, radius, 0.0f, rotaryStartAngle, rotaryEndAngle,
                         true);
-    g.setColour(panel.brighter(0.3f));
-    g.strokePath(track, juce::PathStrokeType(5.0f, juce::PathStrokeType::curved,
+    g.setColour(ink.withAlpha(0.14f));
+    g.strokePath(track, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
     const float angle =
         rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
@@ -151,25 +168,35 @@ void DJLook::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int he
             pointerAngle = center
                 - (float)((centerProp - sliderPosProportional)
                           / (centerProp + 1e-9) * half);
-        if (angle >= center)
-            fill.addCentredArc(cx, cy, radius, radius, 0.0f, center, angle, true);
+        // Fill to the remapped pointer angle, not the raw one: with a skewed
+        // range (e.g. -24..+6 dB) the raw angle sits well past the detent at
+        // 0 dB and would paint a phantom boost arc at rest.
+        if (pointerAngle >= center)
+            fill.addCentredArc(cx, cy, radius, radius, 0.0f, center, pointerAngle,
+                               true);
         else
-            fill.addCentredArc(cx, cy, radius, radius, 0.0f, angle, center, true);
+            fill.addCentredArc(cx, cy, radius, radius, 0.0f, pointerAngle, center,
+                               true);
     } else {
         fill.addCentredArc(cx, cy, radius, radius, 0.0f, rotaryStartAngle, angle,
                            true);
     }
     g.setColour(accent);
-    g.strokePath(fill, juce::PathStrokeType(5.0f, juce::PathStrokeType::curved,
+    g.strokePath(fill, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
                                             juce::PathStrokeType::rounded));
-    g.setColour(ink);
-    g.fillEllipse(cx - radius * 0.62f, cy - radius * 0.62f, radius * 1.24f,
-                  radius * 1.24f);
+    // Dark console body with a thin lit rim (no white plastic disc).
+    const float bodyR = radius * 0.58f;
+    g.setColour(panel.brighter(0.12f));
+    g.fillEllipse(cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f);
+    g.setColour(ink.withAlpha(0.20f));
+    g.drawEllipse(cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f, 1.0f);
     juce::Path pointer;
     const float pa = pointerAngle - juce::MathConstants<float>::halfPi;
-    const float px = cx + std::cos(pa) * radius * 0.55f;
-    const float py = cy + std::sin(pa) * radius * 0.55f;
-    pointer.addLineSegment(juce::Line<float>(cx, cy, px, py), 2.5f);
+    const float sx = cx + std::cos(pa) * radius * 0.12f;
+    const float sy = cy + std::sin(pa) * radius * 0.12f;
+    const float px = cx + std::cos(pa) * radius * 0.50f;
+    const float py = cy + std::sin(pa) * radius * 0.50f;
+    pointer.addLineSegment(juce::Line<float>(sx, sy, px, py), 2.5f);
     g.setColour(accent);
     g.fillPath(pointer);
 }

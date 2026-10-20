@@ -541,6 +541,8 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     }
     fxPage.setVisible(false);
     sysStatus.setText("MIDI: none", juce::dontSendNotification);
+    addAndMakeVisible(mixerGlass);
+    mixerGlass.toBack();
     addAndMakeVisible(mixerHeader);
     mixerHeader.setText("MIXER", juce::dontSendNotification);
     mixerHeader.setJustificationType(juce::Justification::centred);
@@ -1179,8 +1181,10 @@ void MainComponent::resized() {
     area.removeFromLeft(12);
     layoutDeck(strips[1], area);
 
-    // Mixer strip: header, channel caps, 4 knob rows, PFL + faders, xfade row.
-    // PFL sits with the faders, DJM-style, not at the top.
+    // Mixer strip: glass panel, header, channel caps, 4 knob rows,
+    // PFL + faders, xfade row pinned to the bottom (DJM-style).
+    mixerGlass.setBounds(center);
+    center = center.reduced(10, 8);
     mixerHeader.setBounds(center.removeFromTop(28));
 
     auto chanRow = center.removeFromTop(18);
@@ -1200,23 +1204,26 @@ void MainComponent::resized() {
         knobsB[k]->setBounds(row.reduced(10, 2));
     }
 
-    auto fadRow = center.removeFromTop(190);
+    auto fadRow =
+        center.removeFromTop(juce::jlimit(160, 320, center.getHeight() - 58));
     const int fw = fadRow.getWidth() / 2;
     auto colA = fadRow.removeFromLeft(fw);
     strips[0].pfl.setBounds(colA.removeFromTop(28).withSizeKeepingCentre(84, 24));
     chanMeters[0].setBounds(colA.removeFromLeft(14).reduced(0, 6));
-    strips[0].fader.setBounds(colA.withSizeKeepingCentre(40, 162));
+    strips[0].fader.setBounds(
+        colA.withSizeKeepingCentre(40, juce::jmax(120, colA.getHeight() - 36)));
     strips[1].pfl.setBounds(fadRow.removeFromTop(28).withSizeKeepingCentre(84, 24));
     chanMeters[1].setBounds(fadRow.removeFromLeft(14).reduced(0, 6));
-    strips[1].fader.setBounds(fadRow.withSizeKeepingCentre(40, 162));
+    strips[1].fader.setBounds(
+        fadRow.withSizeKeepingCentre(40, juce::jmax(120, fadRow.getHeight() - 36)));
 
-    auto xRow = center;
+    auto xRow = center.removeFromBottom(juce::jmin(58, center.getHeight()));
     mixerCaps[0].setBounds(xRow.removeFromLeft(56));
     xRow.removeFromLeft(4);
     auto blendCol = xRow.removeFromRight(56);
-    xfade.setBounds(xRow);
     mixerCaps[2].setBounds(blendCol.removeFromTop(14));
     cueBlend.setBounds(blendCol);
+    xfade.setBounds(xRow.reduced(0, 14));
 
     auto brow = browser;
     browserGlass.setBounds(brow);
