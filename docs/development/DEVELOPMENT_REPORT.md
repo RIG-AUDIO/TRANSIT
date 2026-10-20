@@ -198,3 +198,30 @@ original brief had deferred, on a new branch
   The scan analyses outside the library lock (a long folder never blocks
   the UI), and a file that could not be read at scan time keeps its
   unknown values until its size or timestamp changes.
+
+**CI history (GitHub Actions, no local builds).** Two red runs, each
+fixed once by inspection of the failing job log:
+
+1. `39325970646` — `probeDuration` called a non-const
+   `AudioFormatManager::createReaderFor` through a const member; fixed by
+   making the method non-const (`838f60c`).
+2. `39327260414` — `putU32` in the new WAV test writer did not capture
+   `putU16`; fixed with a by-reference capture (`261585f`).
+3. `39329090509` — `uistate_test` was "Not Run" under ASan+UBSan because
+   that job builds an explicit target list; the new target was added
+   (this strengthens the gate: the test now runs under the sanitizers)
+   (`d4cfcc8`). Result: 7/8 jobs green, `library_test` passed under
+   ASan/UBSan including the tempo/duration assertions.
+
+Green runs on the branch: `39331366919` (all 8 jobs, 11m35s) and
+`39387321847` (all 8 jobs, 9m54s, after the em-dash fix below).
+
+4. Artifact review of `39331366919`'s screenshots caught a rendering
+   defect the harness cannot see (it checks dimensions and brightness,
+   not glyphs): the unknown-tempo cell drew `â` plus two boxes instead
+   of `—`. Cause: JUCE's `String(const char*)` is an ASCII constructor —
+   bytes above 127 are stored per-byte, not decoded as UTF-8. Fixed with
+   `juce::String::charToString(0x2014)` (`3217ce8`), which builds the
+   codepoint directly. Verified in the `39387321847` shots: a clean em
+   dash at both 1920x1080 and 1100x824, with `0:08` durations, folder,
+   size and date columns all present.
