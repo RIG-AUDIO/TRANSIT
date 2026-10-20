@@ -96,7 +96,7 @@ int main() {
 
     const UiState round2 = lean::parseUiState(lean::serializeUiState(files));
     check(round2.scroll == 0 && round2.fileZoom.size() == 2
-              && lean::findFileZoom(round2, "/a=b/d e.wav") != nullptr,
+              && lean::findFileZoom(round2, "/a=c/d e.wav") != nullptr,
           "filezoom serialize/parse round trip");
 
     const UiState round3 = lean::parseUiState(
