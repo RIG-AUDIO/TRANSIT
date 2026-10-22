@@ -232,6 +232,13 @@ private:
     void updateDeckHeader(int deck);
     void loadMidiMap();
     void saveMidiMap();
+    // FLX4 factory map: (re)installs the routing grid (learned binds +
+    // device table when active) and drives device open/persistence.
+    void applyMidiRouting();
+    void openMidiDevice(int comboIndex); // combo item -> engine index
+    void drainFlx4Actions();
+    void updateFlx4Leds();
+    void setSyncFromUi(int deck, bool want);
     juce::Slider* sliderFor(int deck, lean::MidiTarget target);
     juce::File midiMapFile() const;
     juce::String formatTime(double seconds) const;
@@ -289,6 +296,14 @@ private:
     AuxStrip auxStrips[4];
     juce::Component fxPage;
     uint64_t learnSeen = 0;
+    // FLX4 factory-map state (message thread only).
+    bool flx4Active = false;
+    bool shiftHeld[2] = { false, false };
+    int jogIdleTicks[2] = { 99, 99 }; // ticks since the last jog nudge
+    int ledPlay[2] = { -1, -1 };      // last LED states sent (-1 = never)
+    int ledCue[2] = { -1, -1 };
+    int ledSync[2] = { -1, -1 };
+    int ledPfl[2] = { -1, -1 };
     bool showBpm = true;
     CueHold cueHolds[2];
     juce::String lastHeader[2];

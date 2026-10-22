@@ -30,6 +30,9 @@ struct UiState {
     int scroll = 0;
     // Per-file waveform zoom memory: path -> zoom index, MRU at the back.
     std::vector<std::pair<std::string, int>> fileZoom;
+    // Last-selected MIDI input device name ("" = none). Restored at startup
+    // by matching against the enumerated inputs.
+    std::string midi;
 };
 
 // Strict integer parse: no digits means "no value" (the caller keeps its
@@ -116,6 +119,12 @@ inline UiState parseUiState(std::string_view text) {
             const std::string_view rhs = line.substr(eq + 1);
             if (key == "filezoom") {
                 parseFileZoomLine(rhs, state);
+            } else if (key == "midi") {
+                std::string name(rhs);
+                while (!name.empty()
+                       && (name.back() == '\r' || name.back() == ' '))
+                    name.pop_back();
+                state.midi = std::move(name);
             } else {
                 int value = 0;
                 if (parseUiInt(rhs, value)) {
@@ -144,7 +153,10 @@ inline std::string serializeUiState(const UiState& state) {
     out += "zoom1=" + std::to_string(state.zoom[1]) + "\n";
     out += "scroll=" + std::to_string(state.scroll) + "\n";
     for (const auto& entry : state.fileZoom)
-        out += "filezoom=" + entry.first + "|" + std::to_string(entry.second) + "\n";
+        out += "filezoom=" + entry.first + "|" + std::to_string(entry.second)
+            + "\n";
+    if (!state.midi.empty())
+        out += "midi=" + state.midi + "\n";
     return out;
 }
 

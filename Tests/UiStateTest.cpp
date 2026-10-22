@@ -106,6 +106,24 @@ int main() {
     const int* pq = lean::findFileZoom(round3, "/p q.wav");
     check(pq != nullptr && *pq == 3, "full state round trip (file zoom)");
 
+    // Round 5: MIDI device name key.
+    check(defaults.midi.empty(), "default midi empty");
+    check(lean::parseUiState("midi=DDJ-FLX4 MIDI 1\n").midi
+              == "DDJ-FLX4 MIDI 1",
+          "parses midi name");
+    check(lean::parseUiState("mode=sync\nmidi=DEV\n").midi == "DEV",
+          "midi coexists with other keys");
+    check(lean::parseUiState("midi=\n").midi.empty(), "empty midi stays empty");
+    check(lean::parseUiState("midi=DEV\r\n").midi == "DEV",
+          "strips trailing CR");
+    check(lean::parseUiState("midi=DEV \n").midi == "DEV",
+          "strips trailing space");
+    const UiState midiState = lean::parseUiState("midi=DDJ-FLX4\n");
+    const UiState midiRound = lean::parseUiState(lean::serializeUiState(midiState));
+    check(midiRound.midi == "DDJ-FLX4", "midi serialize/parse round trip");
+    check(lean::serializeUiState(defaults).find("midi=") == std::string::npos,
+          "empty midi is not serialized");
+
     if (failures == 0)
         std::printf("UISTATE_TEST PASS\n");
     else

@@ -317,14 +317,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         };
         s.sync.setClickingTogglesState(true);
         s.sync.onClick = [this, d] {
-            const bool want = strips[d].sync.getToggleState();
-            if (want && !engine.setSync(d, true)) {
-                strips[d].sync.setToggleState(false, juce::dontSendNotification);
-                sysStatus.setText("SYNC needs analyzed BPM on both decks",
-                                  juce::dontSendNotification);
-            } else if (!want) {
-                engine.setSync(d, false);
-            }
+            setSyncFromUi(d, strips[d].sync.getToggleState());
         };
         s.key.setClickingTogglesState(true);
         s.key.onClick = [this, d] { engine.setKeylock(d, strips[d].key.getToggleState()); };
@@ -474,9 +467,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     for (const auto& name : engine.midiInputNames())
         midiCombo.addItem(name, midiCombo.getNumItems() + 1);
     midiCombo.setSelectedId(1, juce::dontSendNotification);
-    midiCombo.onChange = [this] {
-        engine.openMidiInput(midiCombo.getSelectedId() - 2);
-    };
+    midiCombo.onChange = [this] { openMidiDevice(midiCombo.getSelectedId() - 2); };
     learnButton.setClickingTogglesState(true);
     learnButton.onClick = [this] {
         if (!learnButton.getToggleState())
@@ -558,10 +549,9 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         chanCaps[d].setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)).boldened());
     }
     loadMidiMap();
-    // Replay the persisted map into the engine's realtime grid.
-    engine.clearMidiGrid();
-    for (const auto& b : midiMap.all())
-        engine.bindMidi(b.channel, b.cc, b.deck, b.target);
+    // Replay the persisted map into the engine's realtime grid (+ the FLX4
+    // table once a matching device is opened; loadSettings does that).
+    applyMidiRouting();
     loadSettings();
 
     setSize(1100, 824);
@@ -624,6 +614,152 @@ void MainComponent::saveMidiMap() {
     const auto f = midiMapFile();
     f.getParentDirectory().createDirectory();
     f.replaceWithText(midiMap.save());
+}
+
+void MainComponent::applyMidiRouting() {
+    engine.clearMidiGrid();
+    for (const auto& b : midiMap.all())
+        engine.bindMidi(b.channel, b.cc, b.deck, b.target);
+    // Installs the FLX4 value table (14-bit pairs) when a matching device
+    // is open; a plain clear+relearn above keeps learned binds intact.
+    engine.setFlx4Mode(flx4Active);
+}
+
+void MainComponent::openMidiDevice(int engineIndex) {
+    engine.openMidiInput(engineIndex);
+    flx4Active = false;
+    shiftHeld[0] = shiftHeld[1] = false;
+    for (int d = 0; d < 2; ++d)
+        engine.setBend(d, 0.0);
+    const auto names = engine.midiInputNames();
+    if (engineIndex >= 0 && engineIndex < names.size()) {
+        const juce::String name = names[engineIndex];
+        uiState.midi = name.toStdString();
+        if (lean::flx4NameMatches(name.toRawUTF8())) {
+            flx4Active = true;
+            sysStatus.setText("MIDI: DDJ-FLX4 mapped", juce::dontSendNotification);
+        } else {
+            sysStatus.setText("MIDI: " + name, juce::dontSendNotification);
+        }
+    } else {
+        uiState.midi.clear();
+        sysStatus.setText("MIDI: none", juce::dontSendNotification);
+    }
+    applyMidiRouting();
+    if (flx4Active)
+        engine.sendFlx4SysEx(lean::kFlx4ResyncSysEx,
+                             (int)sizeof(lean::kFlx4ResyncSysEx));
+    // LED cache invalidated; the next timer tick resends every LED.
+    for (int d = 0; d < 2; ++d)
+        ledPlay[d] = ledCue[d] = ledSync[d] = ledPfl[d] = -1;
+}
+
+void MainComponent::setSyncFromUi(int deck, bool want) {
+    if (want && !engine.setSync(deck, true)) {
+        strips[deck].sync.setToggleState(false, juce::dontSendNotification);
+        sysStatus.setText("SYNC needs analyzed BPM on both decks",
+                          juce::dontSendNotification);
+        return;
+    }
+    if (!want)
+        engine.setSync(deck, false);
+    strips[deck].sync.setToggleState(want, juce::dontSendNotification);
+}
+
+void MainComponent::drainFlx4Actions() {
+    lean::Flx4ActionMsg msgs[16];
+    const int n = engine.drainFlx4Actions(msgs, 16);
+    for (int i = 0; i < n; ++i) {
+        const auto& m = msgs[i];
+        const auto action = (lean::Flx4Action)m.action;
+        const int d = m.deck & 1;
+        switch (action) {
+            case lean::Flx4Action::Play:
+                if (m.pressed != 0) {
+                    const bool want = !engine.isPlaying(d);
+                    engine.play(d, want);
+                    strips[d].play.setToggleState(want,
+                                                  juce::dontSendNotification);
+                }
+                break;
+            case lean::Flx4Action::Cue:
+                if (m.pressed != 0)
+                    engine.startCuePreview(d);
+                else
+                    engine.stopCuePreview(d);
+                break;
+            case lean::Flx4Action::Sync:
+                if (m.pressed != 0)
+                    setSyncFromUi(d, !engine.isSync(d));
+                break;
+            case lean::Flx4Action::Pfl:
+                if (m.pressed != 0) {
+                    const bool want = !engine.isPfl(d);
+                    engine.setPfl(d, want);
+                    strips[d].pfl.setToggleState(want,
+                                                 juce::dontSendNotification);
+                }
+                break;
+            case lean::Flx4Action::Shift:
+                shiftHeld[d] = m.pressed != 0;
+                break;
+            case lean::Flx4Action::Load:
+                if (m.pressed != 0) {
+                    toB.setToggleState(d == 1, juce::dontSendNotification);
+                    loadBrowserRow(fileList.getSelectedRow());
+                }
+                break;
+            case lean::Flx4Action::BrowsePress:
+                if (m.pressed != 0)
+                    loadBrowserRow(fileList.getSelectedRow());
+                break;
+            case lean::Flx4Action::BrowseScroll: {
+                const int row = fileList.getSelectedRow() + m.delta;
+                fileList.setSelectedRow(
+                    juce::jlimit(0, juce::jmax(0, fileList.getNumRows() - 1), row),
+                    juce::dontSendNotification);
+                break;
+            }
+            case lean::Flx4Action::JogNudge:
+                engine.setBend(d, juce::jlimit(-1.0, 1.0, (double)m.delta / 32.0));
+                jogIdleTicks[d] = 0;
+                break;
+            case lean::Flx4Action::JogSearch:
+                engine.jumpBeats(d, (double)juce::jlimit(-16, 16, (int)m.delta));
+                break;
+            case lean::Flx4Action::None:
+                break;
+        }
+    }
+}
+
+void MainComponent::updateFlx4Leds() {
+    if (!flx4Active)
+        return;
+    const int chs[2] = { (int)lean::Flx4Leds::deck1Ch, (int)lean::Flx4Leds::deck2Ch };
+    for (int d = 0; d < 2; ++d) {
+        const bool playing = engine.isPlaying(d);
+        const int play = playing ? 1 : 0;
+        const int cue = playing ? 0 : 1; // lit while paused (CDJ-style ready)
+        const int sync = engine.isSync(d) ? 1 : 0;
+        const int pfl = engine.isPfl(d) ? 1 : 0;
+        if (play != ledPlay[d]) {
+            ledPlay[d] = play;
+            engine.sendFlx4Note(chs[d], lean::Flx4Leds::play, play != 0);
+        }
+        if (cue != ledCue[d]) {
+            ledCue[d] = cue;
+            engine.sendFlx4Note(chs[d], lean::Flx4Leds::cue, cue != 0);
+        }
+        if (sync != ledSync[d]) {
+            ledSync[d] = sync;
+            engine.sendFlx4Note(chs[d], lean::Flx4Leds::sync, sync != 0);
+        }
+        if (pfl != ledPfl[d]) {
+            ledPfl[d] = pfl;
+            engine.sendFlx4Note(chs[d], lean::Flx4Leds::pfl, pfl != 0);
+        }
+    }
 }
 
 void MainComponent::openFile(int deck) {
@@ -716,6 +852,17 @@ void MainComponent::loadSettings() {
     }
     engine.setKeylockEco(eco);
     setBeatModeUI(sync);
+    // FLX4 round 5: restore the last-selected MIDI device (exact name match).
+    if (!uiState.midi.empty()) {
+        const juce::String want(uiState.midi);
+        for (int i = 0; i < midiCombo.getNumItems(); ++i) {
+            if (midiCombo.getItemText(i) == want) {
+                midiCombo.setSelectedId(i + 1, juce::dontSendNotification);
+                openMidiDevice(i - 1); // item 0 = "(no MIDI)" -> engine -1
+                break;
+            }
+        }
+    }
     // Reload persisted aux plugins (slow ones cost startup time; failures
     // only land in the status line, never crash startup).
     for (int a = 0; a < 4 && a < auxPaths.size(); ++a) {
@@ -1101,6 +1248,18 @@ void MainComponent::timerCallback() {
             if (strips[d].wave)
                 strips[d].wave->repaint();
         }
+    }
+    // FLX4 round 5: drain note events (transport/cue/shift/load/jog),
+    // jog nudge release after 3 idle ticks (~100 ms), and LED echo.
+    if (flx4Active) {
+        drainFlx4Actions();
+        for (int d = 0; d < 2; ++d) {
+            if (jogIdleTicks[d] < 99)
+                ++jogIdleTicks[d];
+            if (jogIdleTicks[d] == 3)
+                engine.setBend(d, 0.0);
+        }
+        updateFlx4Leds();
     }
     repaint(getLocalBounds().removeFromBottom(26));
 }

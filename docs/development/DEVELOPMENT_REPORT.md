@@ -43,6 +43,7 @@ point. Branch `feat/gui-waveform-stability`, draft PR
 | Round 2 — metadata columns + zoom state | see PR #2 | see PR #2 | see §11 |
 | Round 3 — browser scroll + per-file zoom memory (W9) | see PR #2 | see PR #2 | see §12 |
 | Round 4 — mixer visual upgrade + bipolar EQ fill fix | see PR #2 | see PR #2 | see §13 |
+| Round 5 — Pioneer DDJ-FLX4 factory MIDI map | see PR #2 | see PR #2 | see §14 |
 
 Red-run history (all before the current streak): 9 red runs total —
 `ff769bd`/39129895367, `6e7c362`/39161205557, `fb9ec0d`/39166640510,
