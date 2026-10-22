@@ -239,10 +239,13 @@ int run() {
     lean::Pickup pk4;
     check(pk4.process(3, 0.0f, 0.0f) >= 0.0f, "pickup equal engages");
     // Endpoint snap-in: hardware at full travel engages on first tick.
+    // Engaged ticks return the hardware value (0.0 is a valid apply
+    // value; only negatives mean "ignore").
     lean::Pickup pkEndHi;
     check(pkEndHi.process(4, 0.5f, 1.0f) > 0.0f, "pickup endpoint high engages");
     lean::Pickup pkEndLo;
-    check(pkEndLo.process(5, 0.5f, 0.0f) > 0.0f, "pickup endpoint low engages");
+    check(pkEndLo.process(5, 0.5f, 0.0f) >= 0.0f,
+          "pickup endpoint low engages");
     // Out-of-range cell passes through unfiltered.
     check(std::abs(pk.process(-1, 0.5f, 0.3f) - 0.3f) < 1e-6f,
           "pickup bad cell passthrough");
