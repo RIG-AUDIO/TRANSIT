@@ -1480,7 +1480,13 @@ void MainComponent::resized() {
     fxPage.setBounds(brow);
     {
         // FX view shares the browser footprint: 4 aux strips across.
-        auto fx = inner;
+        // The strips are children of fxPage, so lay them out in
+        // fxPage-local coordinates (origin 0,0 = brow's top-left); using
+        // MainComponent coords pushed them off the page's bottom edge and
+        // the whole view clipped to blank.
+        auto fx =
+            juce::Rectangle<int>(0, 0, brow.getWidth(), brow.getHeight())
+                .reduced(12, 10);
         const int sw = fx.getWidth() / 4;
         for (int a = 0; a < 4; ++a) {
             auto& s = auxStrips[a];
