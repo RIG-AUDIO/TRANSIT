@@ -250,6 +250,7 @@ void MainComponent::FileList::returnKeyPressed(int row) {
 
 MainComponent::MainComponent() : fileList("browser", &fileModel) {
     setLookAndFeel(&look);
+    setWantsKeyboardFocus(true); // transport F-keys start here, then bubble
     audioFormats.registerBasicFormats(); // G6 round 2: duration probes
     const char* names[2] = { "A", "B" };
     const char* knobNames[4] = { "GAIN", "LOW", "MID", "HIGH" };
@@ -768,6 +769,69 @@ void MainComponent::updateFlx4Leds() {
             engine.sendFlx4Note(chs[d], lean::Flx4Leds::pfl, pfl != 0);
         }
     }
+}
+
+// F-key transport: index 0..7 maps to deck (index & 1) and action
+// (index >> 1): play, cue hold, PFL, load selection.
+namespace {
+int fnKeyIndex(int keyCode) {
+    if (keyCode == juce::KeyPress::F1Key)
+        return 0;
+    if (keyCode == juce::KeyPress::F2Key)
+        return 1;
+    if (keyCode == juce::KeyPress::F3Key)
+        return 2;
+    if (keyCode == juce::KeyPress::F4Key)
+        return 3;
+    if (keyCode == juce::KeyPress::F5Key)
+        return 4;
+    if (keyCode == juce::KeyPress::F6Key)
+        return 5;
+    if (keyCode == juce::KeyPress::F7Key)
+        return 6;
+    if (keyCode == juce::KeyPress::F8Key)
+        return 7;
+    return -1;
+}
+} // namespace
+
+bool MainComponent::keyPressed(const juce::KeyPress& key) {
+    const int idx = fnKeyIndex(key.getKeyCode());
+    if (idx < 0)
+        return false;
+    if (fnHeld[idx])
+        return true; // auto-repeat: the action already ran on first press
+    fnHeld[idx] = true;
+    const int d = idx & 1;
+    switch (idx >> 1) {
+        case 0:
+            strips[d].play.triggerClick();
+            break;
+        case 1:
+            engine.startCuePreview(d);
+            break;
+        case 2:
+            strips[d].pfl.triggerClick();
+            break;
+        case 3:
+            toB.setToggleState(d == 1, juce::dontSendNotification);
+            loadBrowserRow(fileList.getSelectedRow());
+            break;
+        default:
+            break;
+    }
+    return true;
+}
+
+bool MainComponent::keyReleased(const juce::KeyPress& key) {
+    const int idx = fnKeyIndex(key.getKeyCode());
+    if (idx < 0)
+        return false;
+    fnHeld[idx] = false;
+    const int d = idx & 1;
+    if ((idx >> 1) == 1 && engine.isPreviewing(d))
+        engine.stopCuePreview(d);
+    return true;
 }
 
 void MainComponent::openFile(int deck) {
@@ -1300,7 +1364,7 @@ void MainComponent::paint(juce::Graphics& g) {
 }
 
 void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
-    auto headRow = panel.removeFromTop(28);
+    auto headRow = panel.removeFromTop(36);
     s.header.setBounds(headRow.removeFromLeft(headRow.getWidth() - 140));
     headRow.removeFromLeft(6);
     s.sync.setBounds(headRow.removeFromLeft(58));
@@ -1308,24 +1372,27 @@ void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
     s.zoomOutBtn.setBounds(headRow.removeFromLeft(32));
     headRow.removeFromLeft(6);
     s.zoomInBtn.setBounds(headRow.removeFromLeft(32));
-    auto buttons = panel.removeFromTop(30);
-    s.open.setBounds(buttons.removeFromLeft(64));
+    auto buttons = panel.removeFromTop(56);
+    s.open.setBounds(buttons.removeFromLeft(64).withSizeKeepingCentre(64, 40));
     buttons.removeFromLeft(5);
-    s.play.setBounds(buttons.removeFromLeft(52));
+    s.play.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
     buttons.removeFromLeft(5);
-    s.cue.setBounds(buttons.removeFromLeft(52));
+    s.cue.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
     buttons.removeFromLeft(5);
-    s.key.setBounds(buttons.removeFromLeft(52));
-    auto statusRow = panel.removeFromTop(22);
-    s.stateChip.setBounds(statusRow.removeFromLeft(86));
+    s.key.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
+    auto statusRow = panel.removeFromTop(34);
+    s.stateChip.setBounds(
+        statusRow.removeFromLeft(86).withSizeKeepingCentre(86, 24));
     s.status.setBounds(statusRow);
-    auto timeRow = panel.removeFromTop(20);
-    s.back.setBounds(timeRow.removeFromLeft(40));
+    auto timeRow = panel.removeFromTop(50);
+    s.back.setBounds(timeRow.removeFromLeft(40).withSizeKeepingCentre(40, 30));
     timeRow.removeFromLeft(6);
-    s.fwd.setBounds(timeRow.removeFromRight(40));
+    s.fwd.setBounds(timeRow.removeFromRight(40).withSizeKeepingCentre(40, 30));
     timeRow.removeFromRight(6);
     s.time.setBounds(timeRow);
-    s.tempo.setBounds(panel.removeFromTop(30));
+    s.tempo.setBounds(panel.removeFromTop(64));
+    // Bounded waveform band (main + overview stripe): the strip height is
+    // set by resized() so the deck column never swallows the window.
     if (s.wave)
         s.wave->setBounds(panel.reduced(0, 2));
 }
@@ -1336,7 +1403,17 @@ void MainComponent::resized() {
     topBar.setBounds(full.removeFromTop(64));
     auto area = full.reduced(12);
     area.removeFromBottom(34); // meter
-    auto browser = area.removeFromBottom(220);
+    // Proportioned deck band: the waveform strip is a bounded row inside
+    // the deck (main + overview stripe), so the deck column keeps a fixed
+    // content height and the library takes everything else. The clamp
+    // guarantees the browser keeps its 220 px floor at every window size.
+    constexpr int kStripRows = 240; // header+transport+status+time+tempo
+    constexpr int kWaveCap = 190;   // main waveform + overview stripe
+    const int avail = area.getHeight();
+    const int cap = getLocalBounds().getHeight() >= 1200 ? 230 : kWaveCap;
+    const int waveH = juce::jlimit(110, cap, avail - 8 - 220 - kStripRows - 4);
+    const int deckH = kStripRows + 4 + waveH;
+    auto browser = area.removeFromBottom(avail - 8 - deckH);
     area.removeFromBottom(8);
 
     // Club layout: deck | mixer | deck.
@@ -1352,9 +1429,9 @@ void MainComponent::resized() {
     // PFL + faders, xfade row pinned to the bottom (DJM-style).
     mixerGlass.setBounds(center);
     center = center.reduced(10, 8);
-    mixerHeader.setBounds(center.removeFromTop(28));
+    mixerHeader.setBounds(center.removeFromTop(24));
 
-    auto chanRow = center.removeFromTop(18);
+    auto chanRow = center.removeFromTop(16);
     chanRow.removeFromLeft(56);
     chanCaps[0].setBounds(chanRow.removeFromLeft(chanRow.getWidth() / 2));
     chanCaps[1].setBounds(chanRow);
@@ -1364,7 +1441,7 @@ void MainComponent::resized() {
     juce::Slider* knobsB[4] = { &strips[1].gain, &strips[1].low, &strips[1].mid,
                                 &strips[1].high };
     for (int k = 0; k < 4; ++k) {
-        auto row = center.removeFromTop(44);
+        auto row = center.removeFromTop(42);
         strips[0].knobCaps[k].setBounds(row.removeFromLeft(56));
         const int cw = row.getWidth() / 2;
         knobsA[k]->setBounds(row.removeFromLeft(cw).reduced(10, 2));

@@ -6,15 +6,16 @@
 
 #include <BinaryData.h>
 
-const juce::Colour DJLook::bg(0xff14171c);
-const juce::Colour DJLook::panel(0xff1d2229);
-const juce::Colour DJLook::deep(0xff0a0d10);
-const juce::Colour DJLook::well(0xff161a20);
+const juce::Colour DJLook::bg(0xff1b1f26);
+const juce::Colour DJLook::panel(0xff232833);
+const juce::Colour DJLook::deep(0xff0e1116);
+const juce::Colour DJLook::well(0xff191e27);
 const juce::Colour DJLook::accent(0xffffb454);
 const juce::Colour DJLook::cyan(0xff5fd4ff);
 const juce::Colour DJLook::alarm(0xffff5252);
-const juce::Colour DJLook::ink(0xffe8ecf1);
-const juce::Colour DJLook::dimInk(0xff8b95a3);
+const juce::Colour DJLook::ink(0xffe9eef6);
+const juce::Colour DJLook::dimInk(0xff8f9bad);
+const juce::Colour DJLook::focus(0xff1a9fff);
 
 float DJLook::meterUnit(float amplitude) noexcept {
     if (!(amplitude > 1.0e-6f)) // <= 0 and NaN land at the floor
@@ -25,8 +26,8 @@ float DJLook::meterUnit(float amplitude) noexcept {
 
 void DJLook::drawGlassPanel(juce::Graphics& g, juce::Rectangle<float> area,
                             float radius) {
-    juce::ColourGradient body(juce::Colour(0xff181d26), area.getX(), area.getY(),
-                              juce::Colour(0xff0b0d11), area.getX(),
+    juce::ColourGradient body(juce::Colour(0xff1f2530), area.getX(), area.getY(),
+                              juce::Colour(0xff0f1217), area.getX(),
                               area.getBottom(), false);
     g.setGradientFill(body);
     g.fillRoundedRectangle(area, radius);
@@ -74,14 +75,14 @@ DJLook::DJLook() {
     setColour(juce::TextEditor::textColourId, ink);
     setColour(juce::TextEditor::highlightColourId, accent.withAlpha(0.4f));
     setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
-    setColour(juce::TextEditor::focusedOutlineColourId, accent);
-    setColour(juce::ListBox::backgroundColourId, juce::Colour(0xff101418));
+    setColour(juce::TextEditor::focusedOutlineColourId, focus);
+    setColour(juce::ListBox::backgroundColourId, juce::Colour(0xff141821));
     setColour(juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
     setColour(juce::ComboBox::backgroundColourId, panel);
     setColour(juce::ComboBox::textColourId, ink);
     setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
     setColour(juce::ComboBox::buttonColourId, dimInk);
-    setColour(juce::ComboBox::focusedOutlineColourId, accent);
+    setColour(juce::ComboBox::focusedOutlineColourId, focus);
     setColour(juce::TextButton::textColourOnId, bg);
     setColour(juce::TextButton::textColourOffId, ink);
     setColour(juce::ScrollBar::thumbColourId, dimInk.withAlpha(0.6f));
@@ -131,6 +132,13 @@ void DJLook::drawLinearSlider(juce::Graphics& g, int x, int y, int width, int he
         g.drawEllipse(sliderPos - 7.0f, (float)cy - 7.0f, 14.0f, 14.0f, 1.0f);
         g.setColour(accent);
         g.fillEllipse(sliderPos - 3.5f, (float)cy - 3.5f, 7.0f, 7.0f);
+    }
+    if (slider.hasKeyboardFocus(true)) {
+        g.setColour(focus);
+        g.drawRoundedRectangle(
+            juce::Rectangle<float>((float)x, (float)y, (float)width, (float)height)
+                .reduced(1.0f),
+            4.0f, 1.5f);
     }
 }
 
@@ -215,7 +223,7 @@ void DJLook::drawButtonBackground(juce::Graphics& g, juce::Button& button,
             g.setColour(isRec ? alarm : cyan);
             g.fillRoundedRectangle(area, 5.0f);
         } else if (highlighted && button.isEnabled()) {
-            g.setColour(juce::Colour(0xff1c2230));
+            g.setColour(juce::Colour(0xff1e2432));
             g.fillRoundedRectangle(area, 5.0f);
         }
         return;
@@ -239,10 +247,14 @@ void DJLook::drawButtonBackground(juce::Graphics& g, juce::Button& button,
         g.setColour(down ? accent.darker(0.15f) : accent);
         g.fillRoundedRectangle(area, 4.0f);
     } else {
-        g.setColour(juce::Colour(0xff0b0d10));
+        g.setColour(deep);
         g.fillRoundedRectangle(area, 4.0f);
         g.setColour((highlighted || down) ? accent : accent.withAlpha(0.35f));
         g.drawRoundedRectangle(area, 4.0f, highlighted ? 1.5f : 1.0f);
+    }
+    if (button.hasKeyboardFocus(true)) {
+        g.setColour(focus);
+        g.drawRoundedRectangle(area.expanded(1.5f), 6.0f, 1.5f);
     }
 }
 
