@@ -594,6 +594,9 @@ juce::Slider* MainComponent::sliderFor(int deck, lean::MidiTarget target) {
         case lean::MidiTarget::Master: return &topBar.masterKnob;
         case lean::MidiTarget::Blend: return &cueBlend;
         case lean::MidiTarget::Phones: return &topBar.phonesKnob;
+        // Send rides the per-deck AUX knob; learn reflection uses the
+        // channel strip's send slider via the FLX4 path only.
+        case lean::MidiTarget::Send: return nullptr;
         case lean::MidiTarget::None: return nullptr;
     }
     return nullptr;
@@ -714,10 +717,11 @@ void MainComponent::drainFlx4Actions() {
                     loadBrowserRow(fileList.getSelectedRow());
                 break;
             case lean::Flx4Action::BrowseScroll: {
-                const int row = fileList.getSelectedRow() + m.delta;
-                fileList.setSelectedRow(
-                    juce::jlimit(0, juce::jmax(0, fileList.getNumRows() - 1), row),
-                    juce::dontSendNotification);
+                const int maxRow
+                    = juce::jmax(0, (int)fileModel.rows.size() - 1);
+                const int row = juce::jlimit(
+                    0, maxRow, fileList.getSelectedRow() + m.delta);
+                fileList.selectRow(row);
                 break;
             }
             case lean::Flx4Action::JogNudge:

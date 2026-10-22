@@ -307,7 +307,6 @@ public:
     bool fxRateDirty() const { return fxRack.isRateDirty(); }
     void setSend(int deck, int aux, float v);
     void setAuxReturn(int aux, float v);
-    float getSend(int deck, int aux) const;
     float getAuxReturn(int aux) const;
     void setEq(int deck, double lowDb, double midDb, double highDb) {
         mixer.setEq(deck & 1, lowDb, midDb, highDb);
