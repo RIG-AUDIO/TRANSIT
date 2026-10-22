@@ -1,0 +1,19 @@
+# Build output
+build*/
+Builds/
+cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+.cache/
+
+# Editors / IDEs
+*.exe
+*.pdb
+CMakeSettings.json
+.vs/
+.idea/
+.vscode/
+
+# Test artifacts accidentally written in-tree
+transit_*_test.wav
+*.user
