@@ -6,15 +6,16 @@
 
 #include <BinaryData.h>
 
-const juce::Colour DJLook::bg(0xff14171c);
-const juce::Colour DJLook::panel(0xff1d2229);
-const juce::Colour DJLook::deep(0xff0a0d10);
-const juce::Colour DJLook::well(0xff161a20);
+const juce::Colour DJLook::bg(0xff1b1f26);
+const juce::Colour DJLook::panel(0xff232833);
+const juce::Colour DJLook::deep(0xff0e1116);
+const juce::Colour DJLook::well(0xff191e27);
 const juce::Colour DJLook::accent(0xffffb454);
 const juce::Colour DJLook::cyan(0xff5fd4ff);
 const juce::Colour DJLook::alarm(0xffff5252);
-const juce::Colour DJLook::ink(0xffe8ecf1);
-const juce::Colour DJLook::dimInk(0xff8b95a3);
+const juce::Colour DJLook::ink(0xffe9eef6);
+const juce::Colour DJLook::dimInk(0xff8f9bad);
+const juce::Colour DJLook::focus(0xff1a9fff);
 
 float DJLook::meterUnit(float amplitude) noexcept {
     if (!(amplitude > 1.0e-6f)) // <= 0 and NaN land at the floor
@@ -25,8 +26,8 @@ float DJLook::meterUnit(float amplitude) noexcept {
 
 void DJLook::drawGlassPanel(juce::Graphics& g, juce::Rectangle<float> area,
                             float radius) {
-    juce::ColourGradient body(juce::Colour(0xff181d26), area.getX(), area.getY(),
-                              juce::Colour(0xff0b0d11), area.getX(),
+    juce::ColourGradient body(juce::Colour(0xff1f2530), area.getX(), area.getY(),
+                              juce::Colour(0xff0f1217), area.getX(),
                               area.getBottom(), false);
     g.setGradientFill(body);
     g.fillRoundedRectangle(area, radius);
@@ -74,14 +75,14 @@ DJLook::DJLook() {
     setColour(juce::TextEditor::textColourId, ink);
     setColour(juce::TextEditor::highlightColourId, accent.withAlpha(0.4f));
     setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
-    setColour(juce::TextEditor::focusedOutlineColourId, accent);
-    setColour(juce::ListBox::backgroundColourId, juce::Colour(0xff101418));
+    setColour(juce::TextEditor::focusedOutlineColourId, focus);
+    setColour(juce::ListBox::backgroundColourId, juce::Colour(0xff141821));
     setColour(juce::ListBox::outlineColourId, juce::Colours::transparentBlack);
     setColour(juce::ComboBox::backgroundColourId, panel);
     setColour(juce::ComboBox::textColourId, ink);
     setColour(juce::ComboBox::outlineColourId, juce::Colours::transparentBlack);
     setColour(juce::ComboBox::buttonColourId, dimInk);
-    setColour(juce::ComboBox::focusedOutlineColourId, accent);
+    setColour(juce::ComboBox::focusedOutlineColourId, focus);
     setColour(juce::TextButton::textColourOnId, bg);
     setColour(juce::TextButton::textColourOffId, ink);
     setColour(juce::ScrollBar::thumbColourId, dimInk.withAlpha(0.6f));
@@ -91,29 +92,53 @@ DJLook::DJLook() {
 void DJLook::drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
                               float sliderPos, float /*min*/, float /*max*/,
                               const juce::Slider::SliderStyle style,
-                              juce::Slider&) {
+                              juce::Slider& slider) {
     const bool vertical = style == juce::Slider::LinearVertical;
-    g.setColour(panel.brighter(0.15f));
     if (vertical) {
         const int cx = x + width / 2;
-        g.fillRoundedRectangle((float)cx - 2.0f, (float)y, 4.0f, (float)height, 2.0f);
+        // Recessed well under the groove.
+        g.setColour(deep);
+        g.fillRoundedRectangle((float)cx - 3.0f, (float)y, 6.0f, (float)height, 3.0f);
+        g.setColour(ink.withAlpha(0.10f));
+        g.drawRoundedRectangle((float)cx - 3.0f, (float)y, 6.0f, (float)height, 3.0f,
+                               1.0f);
         g.setColour(accent);
         const float top = juce::jmin(sliderPos, (float)(y + height));
-        g.fillRoundedRectangle((float)cx - 2.0f, top, 4.0f, (float)(y + height) - top, 2.0f);
-        // Slim hardware cap, fixed width regardless of slider bounds.
-        g.setColour(ink);
-        g.fillRoundedRectangle((float)cx - 17.0f, sliderPos - 5.0f, 34.0f, 10.0f,
-                               3.0f);
+        g.fillRoundedRectangle((float)cx - 2.0f, top, 4.0f,
+                               (float)(y + height) - top, 2.0f);
+        // Dark hardware cap with a lit rim and an amber indicator line.
+        const float capY = sliderPos - 6.0f;
+        g.setColour(panel.brighter(0.18f));
+        g.fillRoundedRectangle((float)cx - 17.0f, capY, 34.0f, 12.0f, 3.0f);
+        g.setColour(ink.withAlpha(0.25f));
+        g.drawRoundedRectangle((float)cx - 17.0f, capY, 34.0f, 12.0f, 3.0f, 1.0f);
+        g.setColour(accent);
+        g.fillRoundedRectangle((float)cx - 11.0f, sliderPos - 1.0f, 22.0f, 2.0f,
+                               1.0f);
     } else {
         const int cy = y + height / 2;
-        g.fillRoundedRectangle((float)x, (float)cy - 2.0f, (float)width, 4.0f, 2.0f);
+        g.setColour(deep);
+        g.fillRoundedRectangle((float)x, (float)cy - 3.0f, (float)width, 6.0f, 3.0f);
+        g.setColour(ink.withAlpha(0.10f));
+        g.drawRoundedRectangle((float)x, (float)cy - 3.0f, (float)width, 6.0f, 3.0f,
+                               1.0f);
         g.setColour(accent);
         g.fillRoundedRectangle((float)x, (float)cy - 2.0f, sliderPos - (float)x, 4.0f,
                                2.0f);
-        g.setColour(ink);
-        g.fillEllipse(sliderPos - 6.0f, (float)cy - 6.0f, 12.0f, 12.0f);
+        // Round cap, dark with a lit rim and amber centre.
+        g.setColour(panel.brighter(0.18f));
+        g.fillEllipse(sliderPos - 7.0f, (float)cy - 7.0f, 14.0f, 14.0f);
+        g.setColour(ink.withAlpha(0.25f));
+        g.drawEllipse(sliderPos - 7.0f, (float)cy - 7.0f, 14.0f, 14.0f, 1.0f);
         g.setColour(accent);
-        g.fillEllipse(sliderPos - 3.0f, (float)cy - 3.0f, 6.0f, 6.0f);
+        g.fillEllipse(sliderPos - 3.5f, (float)cy - 3.5f, 7.0f, 7.0f);
+    }
+    if (slider.hasKeyboardFocus(true)) {
+        g.setColour(focus);
+        g.drawRoundedRectangle(
+            juce::Rectangle<float>((float)x, (float)y, (float)width, (float)height)
+                .reduced(1.0f),
+            4.0f, 1.5f);
     }
 }
 
@@ -126,8 +151,8 @@ void DJLook::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int he
     juce::Path track;
     track.addCentredArc(cx, cy, radius, radius, 0.0f, rotaryStartAngle, rotaryEndAngle,
                         true);
-    g.setColour(panel.brighter(0.3f));
-    g.strokePath(track, juce::PathStrokeType(5.0f, juce::PathStrokeType::curved,
+    g.setColour(ink.withAlpha(0.14f));
+    g.strokePath(track, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
                                              juce::PathStrokeType::rounded));
     const float angle =
         rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
@@ -151,25 +176,35 @@ void DJLook::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int he
             pointerAngle = center
                 - (float)((centerProp - sliderPosProportional)
                           / (centerProp + 1e-9) * half);
-        if (angle >= center)
-            fill.addCentredArc(cx, cy, radius, radius, 0.0f, center, angle, true);
+        // Fill to the remapped pointer angle, not the raw one: with a skewed
+        // range (e.g. -24..+6 dB) the raw angle sits well past the detent at
+        // 0 dB and would paint a phantom boost arc at rest.
+        if (pointerAngle >= center)
+            fill.addCentredArc(cx, cy, radius, radius, 0.0f, center, pointerAngle,
+                               true);
         else
-            fill.addCentredArc(cx, cy, radius, radius, 0.0f, angle, center, true);
+            fill.addCentredArc(cx, cy, radius, radius, 0.0f, pointerAngle, center,
+                               true);
     } else {
         fill.addCentredArc(cx, cy, radius, radius, 0.0f, rotaryStartAngle, angle,
                            true);
     }
     g.setColour(accent);
-    g.strokePath(fill, juce::PathStrokeType(5.0f, juce::PathStrokeType::curved,
+    g.strokePath(fill, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved,
                                             juce::PathStrokeType::rounded));
-    g.setColour(ink);
-    g.fillEllipse(cx - radius * 0.62f, cy - radius * 0.62f, radius * 1.24f,
-                  radius * 1.24f);
+    // Dark console body with a thin lit rim (no white plastic disc).
+    const float bodyR = radius * 0.58f;
+    g.setColour(panel.brighter(0.12f));
+    g.fillEllipse(cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f);
+    g.setColour(ink.withAlpha(0.20f));
+    g.drawEllipse(cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f, 1.0f);
     juce::Path pointer;
     const float pa = pointerAngle - juce::MathConstants<float>::halfPi;
-    const float px = cx + std::cos(pa) * radius * 0.55f;
-    const float py = cy + std::sin(pa) * radius * 0.55f;
-    pointer.addLineSegment(juce::Line<float>(cx, cy, px, py), 2.5f);
+    const float sx = cx + std::cos(pa) * radius * 0.12f;
+    const float sy = cy + std::sin(pa) * radius * 0.12f;
+    const float px = cx + std::cos(pa) * radius * 0.50f;
+    const float py = cy + std::sin(pa) * radius * 0.50f;
+    pointer.addLineSegment(juce::Line<float>(sx, sy, px, py), 2.5f);
     g.setColour(accent);
     g.fillPath(pointer);
 }
@@ -188,7 +223,7 @@ void DJLook::drawButtonBackground(juce::Graphics& g, juce::Button& button,
             g.setColour(isRec ? alarm : cyan);
             g.fillRoundedRectangle(area, 5.0f);
         } else if (highlighted && button.isEnabled()) {
-            g.setColour(juce::Colour(0xff1c2230));
+            g.setColour(juce::Colour(0xff1e2432));
             g.fillRoundedRectangle(area, 5.0f);
         }
         return;
@@ -212,10 +247,14 @@ void DJLook::drawButtonBackground(juce::Graphics& g, juce::Button& button,
         g.setColour(down ? accent.darker(0.15f) : accent);
         g.fillRoundedRectangle(area, 4.0f);
     } else {
-        g.setColour(juce::Colour(0xff0b0d10));
+        g.setColour(deep);
         g.fillRoundedRectangle(area, 4.0f);
         g.setColour((highlighted || down) ? accent : accent.withAlpha(0.35f));
         g.drawRoundedRectangle(area, 4.0f, highlighted ? 1.5f : 1.0f);
+    }
+    if (button.hasKeyboardFocus(true)) {
+        g.setColour(focus);
+        g.drawRoundedRectangle(area.expanded(1.5f), 6.0f, 1.5f);
     }
 }
 

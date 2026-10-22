@@ -158,12 +158,16 @@ juce::StringArray AudioEngine::midiInputNames() const {
 
 bool AudioEngine::openMidiInput(int index) {
     midiIn.reset();
+    midiOut.reset();
     const auto devs = juce::MidiInput::getAvailableDevices();
     if (index < 0 || index >= devs.size())
         return index < 0; // closing is always "ok"
     midiIn = juce::MidiInput::openDevice(devs[index].identifier, this);
     if (!midiIn)
         return false;
+    // Best-effort output companion for LED echo / SysEx resync (FLX4); a
+    // failed open only disables feedback, never the input path.
+    midiOut = juce::MidiOutput::openDevice(devs[index].identifier);
     midiIn->start();
     return true;
 }
@@ -173,12 +177,44 @@ void AudioEngine::handleIncomingMidiMessage(juce::MidiInput*,
     // MIDI thread: stamp with the audio frame counter and queue. No UI, no
     // locks; the audio thread drains and applies at the next block.
     if (message.isController()) {
-        midiQueue.push(frameCount.load(std::memory_order_seq_cst),
-                       message.getChannel(), message.getControllerNumber(),
-                       (float)message.getControllerValue() / 127.0f);
-        learnCh.store(message.getChannel(), std::memory_order_seq_cst);
-        learnCc.store(message.getControllerNumber(), std::memory_order_seq_cst);
+        const int ch = message.getChannel();
+        const int num = message.getControllerNumber();
+        const int raw = message.getControllerValue();
+        const bool flx4 = flx4Active.load(std::memory_order_seq_cst);
+        int v14 = -1;
+        int msbNum = num;
+        if (flx4)
+            v14 = midiGrid.ingest14(ch, num, raw, &msbNum);
+        if (v14 >= 0)
+            // Queue under the bound (MSB) CC so the audio thread's cell
+            // lookup also finds LSB-only fine steps.
+            midiQueue.push(frameCount.load(std::memory_order_seq_cst), ch,
+                           msbNum, (float)v14 / 16383.0f);
+        else
+            midiQueue.push(frameCount.load(std::memory_order_seq_cst), ch, num,
+                           (float)raw / 127.0f);
+        // FLX4 relative encoders (jog, browse) route to the action queue.
+        if (flx4) {
+            if (const auto* b = lean::flx4FindAction(0, ch, num)) {
+                flx4Queue.push(lean::Flx4ActionMsg{
+                    (std::uint8_t)b->action, (std::uint8_t)b->deck, 1,
+                    (std::int8_t)lean::flx4Relative((std::uint8_t)raw) });
+            }
+        }
+        learnCh.store(ch, std::memory_order_seq_cst);
+        learnCc.store(num, std::memory_order_seq_cst);
         learnStamp.fetch_add(1, std::memory_order_seq_cst);
+    } else if (flx4Active.load(std::memory_order_seq_cst)
+               && (message.isNoteOn() || message.isNoteOff())) {
+        // FLX4 transport/PFL/load/browse-press notes -> message-thread
+        // action queue (buttons need the UI in the loop).
+        if (const auto* b = lean::flx4FindAction(1, message.getChannel(),
+                                                 message.getNoteNumber())) {
+            const bool on = message.isNoteOn();
+            flx4Queue.push(lean::Flx4ActionMsg{
+                (std::uint8_t)b->action, (std::uint8_t)b->deck,
+                (std::uint8_t)(on ? 1 : 0), 0 });
+        }
     }
 }
 
@@ -188,7 +224,34 @@ void AudioEngine::applyMidiEvent(const lean::MidiEvent& ev) {
         return;
     const int deck = lean::MidiGrid::gridDeck(code);
     const auto target = lean::MidiGrid::gridTarget(code);
-    const float v = lean::midiValue(target, ev.value01);
+    // Soft takeover while the FLX4 map is live: the hardware is silent
+    // until a control is moved, so the first gesture must not jump the app
+    // value. Engage when the hardware reaches or crosses the app value.
+    float v01 = ev.value01;
+    if (flx4Active.load(std::memory_order_seq_cst)
+        && (target == lean::MidiTarget::Tempo || target == lean::MidiTarget::Gain
+            || target == lean::MidiTarget::Fader || target == lean::MidiTarget::Low
+            || target == lean::MidiTarget::Mid || target == lean::MidiTarget::High
+            || target == lean::MidiTarget::Xfade || target == lean::MidiTarget::Blend
+            || target == lean::MidiTarget::Send)) {
+        // Center-detented hardware knobs (trim, EQ): the detent sends 0.5
+        // but the app's detent for those targets sits at 0.8 normalized
+        // (unity gain / 0 dB) — remap before pickup so the first touch
+        // lands on the app value, not -9 dB. EQ knobs are inverted (low at
+        // bottom, high at top) so flip them first.
+        float hw = v01;
+        if (lean::flx4TargetNeedsInvert(target))
+            hw = 1.0f - hw;
+        if (lean::flx4TargetHasDetent(target))
+            hw = lean::flx4DetentToApp(hw);
+        const int cell = (deck & 1) * 16 + (int)target;
+        const float picked
+            = pickups.process(cell, currentTarget01(target, deck), hw);
+        if (picked < 0.0f)
+            return;
+        v01 = picked;
+    }
+    const float v = lean::midiValue(target, v01);
     switch (target) {
         case lean::MidiTarget::Tempo:
             mixer.channel(deck).deck.setTempo((double)v);
@@ -215,8 +278,41 @@ void AudioEngine::applyMidiEvent(const lean::MidiEvent& ev) {
         case lean::MidiTarget::Master: mixer.setMaster(v); break;
         case lean::MidiTarget::Blend: mixer.setCueBlend(v); break;
         case lean::MidiTarget::Phones: mixer.setPhonesLevel(v); break;
+        case lean::MidiTarget::Send: mixer.setSend(deck, 0, v); break;
         case lean::MidiTarget::None: break;
     }
+}
+
+float AudioEngine::currentTarget01(lean::MidiTarget target, int deck) const {
+    deck &= 1;
+    switch (target) {
+        case lean::MidiTarget::Tempo: {
+            const double t = mixer.channel(deck).deck.getTempo();
+            const double u = (t - 0.5) / 1.0;
+            return (float)(u < 0.0 ? 0.0 : (u > 1.0 ? 1.0 : u));
+        }
+        case lean::MidiTarget::Gain:
+            return mixer.channel(deck).deck.gainTarget() / 1.25f;
+        case lean::MidiTarget::Fader: return mixer.faderLevel(deck);
+        case lean::MidiTarget::Low:
+        case lean::MidiTarget::Mid:
+        case lean::MidiTarget::High: {
+            double lo = 0.0, mi = 0.0, hi = 0.0;
+            mixer.eqGains(deck, lo, mi, hi);
+            const double e = target == lean::MidiTarget::Low
+                ? lo
+                : (target == lean::MidiTarget::Mid ? mi : hi);
+            const double u = (e + 24.0) / 30.0;
+            return (float)(u < 0.0 ? 0.0 : (u > 1.0 ? 1.0 : u));
+        }
+        case lean::MidiTarget::Xfade: return mixer.xfadeValue();
+        case lean::MidiTarget::Blend: return mixer.blendValue();
+        case lean::MidiTarget::Send: return mixer.sendLevel(deck, 0);
+        case lean::MidiTarget::Master: return mixer.masterLevel();
+        case lean::MidiTarget::Phones: return mixer.phonesLevelValue();
+        case lean::MidiTarget::None: break;
+    }
+    return 0.0f;
 }
 
 float AudioEngine::getFader(int deck) const {
@@ -241,6 +337,34 @@ float AudioEngine::getBlend() const {
 
 float AudioEngine::getGain(int deck) const {
     return mixer.channel(deck & 1).deck.gainTarget();
+}
+
+void AudioEngine::setFlx4Mode(bool on) {
+    flx4Active.store(on, std::memory_order_seq_cst);
+    if (!on)
+        return;
+    int n = 0;
+    const lean::Flx4ValueBind* table = lean::flx4ValueTable(n);
+    for (int i = 0; i < n; ++i)
+        midiGrid.bind14(table[i].ch, table[i].msb, table[i].deck,
+                        table[i].target);
+}
+
+void AudioEngine::sendFlx4Note(int channel, int note, bool on) {
+    if (!midiOut)
+        return;
+    if (on)
+        midiOut->sendMessageNow(
+            juce::MidiMessage::noteOn(channel, note, (juce::uint8)0x7F));
+    else
+        midiOut->sendMessageNow(juce::MidiMessage::noteOff(channel, note));
+}
+
+void AudioEngine::sendFlx4SysEx(const unsigned char* bytes, int numBytes) {
+    if (!midiOut || bytes == nullptr || numBytes < 4)
+        return; // createSysExMessage adds its own F0/F7
+    midiOut->sendMessageNow(
+        juce::MidiMessage::createSysExMessage(bytes + 1, numBytes - 2));
 }
 
 void AudioEngine::getEq(int deck, double& lo, double& mi, double& hi) const {

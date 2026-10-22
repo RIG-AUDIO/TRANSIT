@@ -43,6 +43,10 @@ void Deck::setTempo(double t) {
     tempo.store(std::clamp(t, 0.25, 4.0), std::memory_order_seq_cst);
 }
 
+void Deck::setBend(double b) {
+    bend.store(std::clamp(b, -1.0, 1.0), std::memory_order_seq_cst);
+}
+
 void Deck::setKeylock(bool enabled) {
     keylock.store(enabled, std::memory_order_seq_cst);
     stretchDirty.store(true, std::memory_order_seq_cst);
@@ -153,14 +157,20 @@ void Deck::render(float* left, float* right, int numSamples) {
     const double fileRateLocal = fileRate.load(std::memory_order_seq_cst);
     const double outputRateLocal = outputRate.load(std::memory_order_seq_cst);
     const double tempoLocal = tempo.load(std::memory_order_seq_cst);
+    // Jog nudge rides on top of the tempo for this block (atomic read, no
+    // per-sample smoothing: block-rate zipper is acceptable for a nudge).
+    const double tempoEff
+        = tempoLocal
+        * (1.0 + std::clamp(bend.load(std::memory_order_seq_cst), -1.0, 1.0)
+                     * kBendRange);
 
     if (keylock.load(std::memory_order_seq_cst)
         && stretchReady.load(std::memory_order_seq_cst)) {
-        renderStretch(buf, left, right, numSamples);
+        renderStretch(buf, left, right, numSamples, tempoEff);
         return;
     }
 
-    const double step = (fileRateLocal / outputRateLocal) * tempoLocal;
+    const double step = (fileRateLocal / outputRateLocal) * tempoEff;
     if (!(step > 0.0) || !std::isfinite(step))
         return;
     renderResample(buf, left, right, numSamples, step);
@@ -191,17 +201,16 @@ void Deck::renderResample(const DeckBuffer& buf, float* left, float* right,
 }
 
 void Deck::renderStretch(const DeckBuffer& buf, float* left, float* right,
-                         int numSamples) {
+                         int numSamples, double tempoEff) {
     const double fileRateLocal = fileRate.load(std::memory_order_seq_cst);
     const double outputRateLocal = outputRate.load(std::memory_order_seq_cst);
-    const double tempoLocal = tempo.load(std::memory_order_seq_cst);
     const float coeff = smoothCoeff(outputRateLocal);
     const double inputStep = fileRateLocal / outputRateLocal;
     double pos = position.load(std::memory_order_seq_cst);
     int done = 0;
     while (done < numSamples) {
         const int m = std::min(512, numSamples - done);
-        double want = stretchCarry + (double)m * tempoLocal;
+        double want = stretchCarry + (double)m * tempoEff;
         int inN = (int)want;
         stretchCarry = want - inN;
         if (inN < 1)

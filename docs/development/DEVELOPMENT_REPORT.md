@@ -39,6 +39,11 @@ point. Branch `feat/gui-waveform-stability`, draft PR
 | M6 SonarQube fixes 1/2 | `3ab8972` | 39316083483 | success |
 | M6 SonarQube fixes 2/2 | `de85052` | 39318471828 | success |
 | M6 report (this file) | see PR #1 checks | see PR #1 checks | see §7 |
+| Promotion to `main` (merge commit) | `02bdc10` | 39323566806 | success |
+| Round 2 — metadata columns + zoom state | see PR #2 | see PR #2 | see §11 |
+| Round 3 — browser scroll + per-file zoom memory (W9) | see PR #2 | see PR #2 | see §12 |
+| Round 4 — mixer visual upgrade + bipolar EQ fill fix | see PR #2 | see PR #2 | see §13 |
+| Round 5 — Pioneer DDJ-FLX4 factory MIDI map | see PR #2 | see PR #2 | see §14 |
 
 Red-run history (all before the current streak): 9 red runs total —
 `ff769bd`/39129895367, `6e7c362`/39161205557, `fb9ec0d`/39166640510,
@@ -77,8 +82,11 @@ aesthetic judgement of the frames remains a human step (phase-2 list in
 - **S1–S9, S11, C1, C3, C4** — fixed by M1. **S10** (aux bypass tail-cut)
   documented as intended behaviour. **S12** — not defects.
 - **W1–W6, W8** — implemented and gated by WaveformTest (~42 named
-  checks) in M2. **W7** — verified keep. **W8 persistence** explicitly
-  out of scope.
+  checks) in M2. **W7** — verified keep. **W8 persistence** was out of
+  scope for the original milestones: round 2 covers the per-deck zoom
+  index (`Source/UiState.h` + `Tests/UiStateTest.cpp`, see §11) and
+  round 3 the W9 remainder — browser scroll + per-file zoom memory
+  (§12).
 - **G1** (badge) M3 · **G2/G7** (tokens/colours) M3 · **G3** window floor
   M4 + coverage M6 (default-windowed vs fullscreen = human decision,
   fullscreen kept) · **G4** meters M4 · **G5** status row M4 · **G6**
@@ -119,9 +127,8 @@ latest run was green, and its run ID is cited in the delivery message.
   aesthetic sign-off on the 29 frames, and the phase-2 manual checklist
   in `CI_VISUAL_TESTING.md` (audio path with a real device, MIDI, FxRack
   with third-party plugins).
-- **G6 BPM/duration columns deferred** — Library schema stores only
-  path/name/size/mtime; analysis-on-index is a schema change beyond this
-  assignment.
+- **G6 BPM/duration columns** — implemented in round 2 (index columns
+  `bpm` / `duration_ms`, scan-time analysis, browser columns); see §11.
 - **G3 default window** stays fullscreen; making windowed the default is
   a product decision, not taken here.
 - **S10** tail-cut on aux bypass/empty is intended and documented.
@@ -132,11 +139,16 @@ latest run was green, and its run ID is cited in the delivery message.
 - **gui-smoke** prints expected X11 warnings (documented); snapshot
   content is validated by the harness assertions, not by an image
   comparator with golden files.
-- **Wave zoom (W8)** does not persist across sessions (out of scope).
+- **Wave zoom (W8)** persists across sessions as of round 2 (§11), and
+  round 3 adds the W9 remainder (§12): the browser scroll position and
+  per-file zoom memory. Not covered: per-file *scroll* memory (the wave
+  window is playhead-following, so there is no independent scroll to
+  store) and zoom entries for files outside the 64-entry cap.
 - The app binary a human runs locally may be an older artifact; always
   re-download `transit-linux-x64-release` from the latest green run.
-- This branch and PR #1 are **not** production-ready: they are a
-  reviewed, CI-validated milestone branch pending human merge review.
+- The promoted `main` branch and this round-2 branch are **not**
+  production-ready: they are CI-validated milestone states pending human
+  review.
 
 ## 9. Deliverables
 
@@ -156,6 +168,222 @@ latest run was green, and its run ID is cited in the delivery message.
 No local compilation or app launches were used for validation; no test
 was disabled or weakened; guard and CI checks were never touched except
 for the style conversion in §6 (behaviour verified in CI itself); the
-README warning was preserved; PR #1 remains draft and unmerged; the
-legacy identity strings remain absent from the tree (scan green in every
-run).
+README warning was preserved; the legacy identity strings remain absent
+from the tree (scan green in every run).
+
+PR #1 was merged into `main` on 2026-10-19 (merge commit `02bdc10`) on
+explicit human instruction, which superseded the "PR #1 stays draft"
+rule of the original brief (AGENTS.md rule 11 scope). The merge was
+verified by the `push: main` CI run.
+
+## 11. Round 2 — library metadata columns and zoom persistence
+
+Scope (chosen with the human after the merge): the two residuals that the
+original brief had deferred, on a new branch
+`feat/metadata-columns-zoom-state` (PR #2, draft).
+
+- **G6 — BPM and duration columns.** The library index gains two
+  columns (`bpm`, `duration_ms`), added in place by a migration so index
+  files written earlier keep working. A scan analyses new or changed
+  files on the worker thread (decode + `lean::detectBpm`); files above
+  64 MB stay unanalysed, and unreadable files keep unknown values
+  instead of failing the scan. The browser reads the values through
+  `Library::metadataFor` and falls back to a header-only duration probe
+  for files outside the index; an unknown tempo shows `—`. The new
+  columns drop out on narrow lists (time < 640 px, bpm < 760 px).
+  Gate: `library_test` writes a real 120 BPM click track and asserts the
+  recovered tempo (~120) and duration (~5 s).
+- **W8 — zoom persistence.** The per-deck zoom index is stored in the
+  settings file (`zoom0=`, `zoom1=`) through the JUCE-free
+  `Source/UiState.h` helpers, so defaults, clamping and malformed input
+  are unit-tested (`uistate_test`) instead of hiding inside the UI. Any
+  zoom change writes the settings file; startup restores the index.
+- Known limits of this round: the tempo estimate is the existing
+  autocorrelation detector (sine tones and silence have no tempo, so
+  those cells stay `—`); the duration probe covers formats JUCE can read
+  headers for; no scroll offset or per-file zoom memory is stored yet.
+  The scan analyses outside the library lock (a long folder never blocks
+  the UI), and a file that could not be read at scan time keeps its
+  unknown values until its size or timestamp changes.
+
+**CI history (GitHub Actions, no local builds).** Two red runs, each
+fixed once by inspection of the failing job log:
+
+1. `39325970646` — `probeDuration` called a non-const
+   `AudioFormatManager::createReaderFor` through a const member; fixed by
+   making the method non-const (`838f60c`).
+2. `39327260414` — `putU32` in the new WAV test writer did not capture
+   `putU16`; fixed with a by-reference capture (`261585f`).
+3. `39329090509` — `uistate_test` was "Not Run" under ASan+UBSan because
+   that job builds an explicit target list; the new target was added
+   (this strengthens the gate: the test now runs under the sanitizers)
+   (`d4cfcc8`). Result: 7/8 jobs green, `library_test` passed under
+   ASan/UBSan including the tempo/duration assertions.
+
+Green runs on the branch: `39331366919` (all 8 jobs, 11m35s) and
+`39387321847` (all 8 jobs, 9m54s, after the em-dash fix below).
+
+4. Artifact review of `39331366919`'s screenshots caught a rendering
+   defect the harness cannot see (it checks dimensions and brightness,
+   not glyphs): the unknown-tempo cell drew `â` plus two boxes instead
+   of `—`. Cause: JUCE's `String(const char*)` is an ASCII constructor —
+   bytes above 127 are stored per-byte, not decoded as UTF-8. Fixed with
+   `juce::String::charToString(0x2014)` (`3217ce8`), which builds the
+   codepoint directly. Verified in the `39387321847` shots: a clean em
+   dash at both 1920x1080 and 1100x824, with `0:08` durations, folder,
+   size and date columns all present.
+
+## 12. Round 3 — browser scroll and per-file zoom memory (W9)
+
+Scope: the W8 residual from §8 — "the stored value is the zoom index
+only (no scroll offset, no per-file memory)" — on the same branch and
+PR as round 2 (the wave window itself is playhead-following, so there
+is no independent wave scroll to store; the scroll state that exists is
+the browser list's).
+
+- **Browser scroll (`scroll=`).** JUCE's `ListBox` exposes its position
+  as a proportion (`getVerticalPosition` / `setVerticalPosition`), so
+  the settings file stores permille (0–1000, integer, clamped at
+  parse time) rather than a row index. The stored value is applied
+  once, after the first real list population (`pendingScroll` waits
+  through empty refreshes); `setVerticalPosition` is a no-op when every
+  row already fits. The destructor now writes the settings file, so a
+  session that only scrolled still persists the position.
+- **Per-file zoom memory (`filezoom=<path>|<idx>`).** Split on the last
+  `|` (paths with `=` or spaces survive; a line without a valid zoom is
+  dropped, a zoom outside the table clamps). Repeated paths keep one
+  entry — the newest wins — and the store is capped at 64 most-recent
+  entries so the file cannot grow with the library. Every deck load
+  now funnels through `MainComponent::requestLoad`: a stored zoom
+  applies at request time (with the save suppressed so the restore is
+  not re-recorded), while a file without an entry keeps the deck's
+  current zoom; the requested path becomes the memory key that later
+  zoom changes record under.
+- **Why the shape:** the rules live in the JUCE-free `Source/UiState.h`
+  next to the round-2 zoom rules, so the whole thing is gated by the
+  extended `Tests/UiStateTest.cpp` (parse defaults, negative/garbage
+  scroll, permille clamp, path fidelity, malformed-line drops, table
+  clamps, dedupe, 64-entry eviction order, full round trip) without a
+  message loop.
+- **Smoke impact:** none. The fixtures are loaded before any zoom
+  change and no file reloads mid-run, so the memory never applies
+  during a run; the harness's final zoom is the default index, so even
+  settings written by the lifecycle cycles or at exit hold values
+  identical to fresh defaults. Documented in `CI_VISUAL_TESTING.md`.
+
+**Round 3 CI history.** One red run, fixed within budget:
+`39396130385` failed only `uistate_test` — a fixture-path typo in the new
+serialize/parse round-trip check (`/a=b/…` looked up where the input
+wrote `/a=c/…`); fixed in `8b285ac`. The suite then ran green end-to-end:
+**`39398458300` — all 8 jobs, 16m08s**, with the extended `uistate_test`
+also passing under ASan+UBSan.
+
+**Shot verification.** The 29 frames were pixel-diffed against the last
+pre-round-3 green run. Differences are confined to the four
+nondeterministic regions documented in `CI_VISUAL_TESTING.md` (clock,
+master ring, bottom bar, mixer meters) — the same regions in which two
+*pre-round-3* runs differ from each other by twice as many pixels
+(1302 vs 686). Round 3 changed no rendered content.
+
+## 13. Round 4 — mixer visual upgrade and bipolar EQ fill fix
+
+Manual review of the round-2/3 release binary reported three defects:
+the EQ knobs' displayed value was wrong at rest, a control was
+misaligned, and the mixer section did not match the design level of the
+upgraded header/browser. Round 4 (`f6fb870`) fixes all three.
+
+**The value defect.** `DJLook::drawRotarySlider`'s bipolar branch
+remapped the *pointer* angle so a skewed EQ range (-24..+6 dB, detent at
+proportion 0.8) still points at 12 o'clock for 0 dB — but the *fill* arc
+was drawn to the raw angle. At rest that raw angle sits 0.3 of the sweep
+past the detent, so every EQ knob painted a phantom boost arc from
+12:00 to ~2:40 while showing a flat 0 dB. The fill now follows the
+remapped pointer angle: flat renders an empty fill, cut and boost grow
+symmetrically outward from the detent.
+
+**The misalignment.** The `BLEND` caption was placed at the top of the
+crossfader column, which at 1080p was 318 px tall — the caption floated
+~124 px above its knob. The xfade row is now a compact 58 px band pinned
+to the bottom of the mixer column (DJM-style), with the caption (14 px)
+hugging the knob (44 px) and the XFADE label centred on the groove. The
+row height is clamped to the available space so the 824 px CI floor
+cannot overlap the faders.
+
+**The design gap.** The mixer joined the glass-panel language
+(`GlassPanel` backdrop, inset 10x8, matching TopBar/browser). Knobs lost
+the near-white plastic discs for dark console bodies with lit rims,
+subtler arc tracks (ink@14%, 4 px), and short amber indicators. Faders
+gained recessed wells with hairline rims and dark caps with amber
+indicator lines (was a plain white pill), and the channel faders became
+long-throw (row 160–320 px, fader following the row height). The change
+also restyles every other slider consumer (deck tempo, TopBar
+MASTER/PHONES, FX-page sends, crossfader) consistently.
+
+**Round 4 CI history.** One push, one run: **`39414595074` — all 8
+jobs, 17m04s** (identity, gcc/clang × Debug/Release, ASan+UBSan,
+TSan, GUI smoke). Zero red runs; zero correction rounds.
+
+**Shot verification.** All 29 frames from `39414595074` were reviewed:
+EQ knobs render an empty fill with pointers up at rest; the glass
+panel, dark knobs, long-throw faders, bottom-pinned xfade row and
+hugging BLEND caption appear at every viewport including the 1100x824
+CI floor (no overlap); TopBar MASTER/PHONES knobs picked up the same
+dark-body language. The brightness floor in the harness is unaffected
+(dark knobs replaced a small bright area; frames remain far above the
+0.1% all-dark threshold).
+
+## 14. Round 5 — Pioneer DDJ-FLX4 factory MIDI map
+
+Round 5 (`ca47ce6`, fix `aab5dda`) adds a factory map for the Pioneer
+DDJ-FLX4 USB DJ controller, selected by device name (case-insensitive
+`ddj-flx4` match) and installed on top of the learned map whenever the
+device opens. Hardware facts come from AlphaTheta's official "DDJ-FLX4
+MIDI message List" (Ver 1.0), corroborated by community reverse
+engineering; the implementation is original clean-room TRANSIT logic
+(documented provenance, no third-party mapping code). The full table
+lives in `docs/development/MIDI_MAPPINGS.md`.
+
+**Values ride the audio thread.** All analog controls (trim, three-band
+EQ, tempo, channel faders, crossfader, phones mix, CFX knobs) are
+standard 14-bit CC pairs folded on the MIDI thread in
+`MidiGrid::bind14`/`ingest14` — each half (MSB `cc`, LSB `cc+0x20`)
+updates its atomics and immediately emits the combined 0..16383 value,
+so the value queue never waits for the partner half and LSB-only fine
+steps still land under the bound MSB cell. CFX 1/2 map creatively to
+the per-deck AUX send (the hardware sends a filter position, not a send
+level). Because the FLX4 is silent until a control is moved, every
+absolute control is gated by a per-cell soft-takeover pickup while the
+device is open: the first gesture must reach or cross the current app
+value before hardware values are applied. Learned controls keep their
+existing immediate behaviour.
+
+**Buttons ride the message thread.** Play/CUE/SYNC/PFL/SHIFT notes, the
+browse press/encoder, LOAD per deck, jog nudge (CC 0x21/0x22/0x23) and
+SHIFT+jog search (CC 0x29) decode on the MIDI thread and land in a
+bounded SPSC mailbox (`Flx4ActionQueue`, 64 slots, drop-oldest-counted)
+drained by the 30 Hz UI timer: transport toggles the deck state and the
+button UI, CUE previews while held, jog applies a temporary +/-6%
+rate bend (`Deck::setBend`) released after ~100 ms of silence, browse
+scroll moves the library selection. LED echo (play/cue/sync/pfl per
+deck) is written back over the opened MIDI output with a last-sent
+cache, and a position-resync SysEx (`F0 00 40 05 00 00 04 05 00 50 02
+F7`) is sent once on activation. The device selection persists as
+`midi=` in the settings file (new `UiState` key).
+
+**Scope.** Pads (hot cues/loops/jump/FX), the BEAT FX section, phones
+level (CC unknown — marked *verify*) and scratch-style jog positioning
+are not mapped yet and are documented as such.
+
+**Round 5 CI history.** First push `ca47ce6` → red run
+`39702764044` (4 build jobs + GUI smoke: duplicate `getSend`
+declaration, a `MidiTarget` switch missing the new `Send` value, and
+two JUCE 9 `ListBox` API names). One correction (`aab5dda`) → **green
+run `39703800128` — all 8 jobs, 12m54s**. One correction round, two
+pushes total; identity scan, gcc/clang × Debug/Release, ASan+UBSan,
+TSan and GUI smoke all pass.
+
+**Shot verification.** All 29 frames from `39703800128` were reviewed:
+correct dimensions at every viewport, brightness far above the 0.1%
+floor, and the round-4 mixer design intact — the FLX4 round is
+UI-neutral (the MIDI combo and status line behave as before on a
+machine without the device).

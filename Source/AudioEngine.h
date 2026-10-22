@@ -22,6 +22,7 @@
 #include "Analyze.h"
 #include "MidiMap.h"
 #include "MidiQueue.h"
+#include "Flx4Map.h"
 #include "FxRack.h"
 
 // JUCE shell around the JUCE-free lean core: owns the audio device, pulls
@@ -123,6 +124,8 @@ public:
         pfl[deck & 1] = on;
         mixer.setCue(deck & 1, on || previewing[deck & 1]);
     }
+    bool isPfl(int deck) const { return pfl[deck & 1]; }
+    bool isPreviewing(int deck) const { return previewing[deck & 1]; }
     void setCueBlend(float v) { mixer.setCueBlend(v); }
     bool hasPhones() const { return fourOuts; }
 
@@ -158,6 +161,8 @@ public:
         const double sec = b > 0.0 ? beats * 60.0 / b : beats;
         d.setPositionSeconds(d.getPositionSeconds() + sec);
     }
+    // Jog nudge: temporary rate offset, -1..1 (see Deck::setBend).
+    void setBend(int deck, double b) { mixer.channel(deck & 1).deck.setBend(b); }
     double getBpm(int deck) const { return bpm[deck & 1]; }
 
     void seekFraction(int deck, double fraction) {
@@ -182,6 +187,13 @@ public:
         ensureDb();
         return library.search(query);
     }
+    // Indexed metadata (tempo estimate, duration) for the given paths. The
+    // browser uses it to fill its metadata columns without touching the disk.
+    std::vector<std::pair<std::string, lean::Library::TrackMeta>> libraryMetadata(
+        const std::vector<std::string>& pathsUtf8) {
+        ensureDb();
+        return library.metadataFor(pathsUtf8);
+    }
 
     // MIDI input devices as (name, identifier-independent index). The UI maps
     // combo indices straight back into openMidiInput.
@@ -201,6 +213,27 @@ public:
         cc = learnCc.load();
     }
 
+    // DDJ-FLX4 factory map: installs the value table (14-bit pairs) into
+    // the grid and turns on note/encoder action parsing on the MIDI thread.
+    // Actions are drained on the message thread (transport needs the UI).
+    void setFlx4Mode(bool on);
+    bool flx4Mode() const { return flx4Active.load(std::memory_order_seq_cst); }
+    int drainFlx4Actions(lean::Flx4ActionMsg* out, int maxOut) {
+        return flx4Queue.drain(out, maxOut);
+    }
+    long long flx4Drops() const { return flx4Queue.droppedCount(); }
+    // LED echo + resync SysEx over the opened MIDI output (no-ops without).
+    void sendFlx4Note(int channel, int note, bool on);
+    void sendFlx4SysEx(const unsigned char* bytes, int numBytes);
+    // 14-bit fold entry point for learn-free tables; returns combined
+    // 0..16383 or -1 when `cc` is not half of a bound 14-bit pair.
+    int midiIngest14(int channel, int cc, int value7) {
+        return midiGrid.ingest14(channel, cc, value7);
+    }
+    void bindMidi14(int channel, int msb, int deck, lean::MidiTarget target) {
+        midiGrid.bind14(channel, msb, deck, target);
+    }
+
     // Render watchdog: worst block render time and overruns past the block
     // budget, for the Setup dialog. Updated on the audio thread.
     long long maxRenderUs() const { return maxRenderUsUs.load(); }
@@ -216,6 +249,7 @@ public:
     float getXfade() const;
     float getBlend() const;
     float getGain(int deck) const;
+    float getSend(int deck, int aux) const;
     void getEq(int deck, double& lo, double& mi, double& hi) const;
 
     // Mix recording to Music/TRANSIT/*.wav. Status text describes the result.
@@ -274,7 +308,6 @@ public:
     bool fxRateDirty() const { return fxRack.isRateDirty(); }
     void setSend(int deck, int aux, float v);
     void setAuxReturn(int aux, float v);
-    float getSend(int deck, int aux) const;
     float getAuxReturn(int aux) const;
     void setEq(int deck, double lowDb, double midDb, double highDb) {
         mixer.setEq(deck & 1, lowDb, midDb, highDb);
@@ -380,8 +413,12 @@ private:
     BeatMode mode = BeatMode::Free;
     double bpm[2] = { 0.0, 0.0 };
     std::unique_ptr<juce::MidiInput> midiIn;
+    std::unique_ptr<juce::MidiOutput> midiOut; // LED echo / SysEx resync
     lean::MidiGrid midiGrid;
     lean::MidiQueue midiQueue;
+    std::atomic<bool> flx4Active{ false };
+    lean::Flx4ActionQueue flx4Queue; // MIDI thread -> message thread
+    lean::Pickup pickups;            // audio thread only (applyMidiEvent)
     std::atomic<uint64_t> frameCount{ 0 };
     std::atomic<int> learnCh{ -1 };
     std::atomic<int> learnCc{ -1 };
@@ -395,6 +432,8 @@ private:
                                    const juce::MidiMessage& message) override;
     juce::String applySetup(juce::AudioDeviceManager::AudioDeviceSetup setup);
     void applyMidiEvent(const lean::MidiEvent& ev);
+    // Current app value of a MIDI target in 0..1 (soft-takeover reference).
+    float currentTarget01(lean::MidiTarget target, int deck) const;
 
     static constexpr int meterSize = 64;
     PeakFrame peakSlots[meterSize] = {};

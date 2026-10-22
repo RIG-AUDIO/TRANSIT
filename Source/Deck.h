@@ -51,6 +51,11 @@ public:
     void setOutputRate(double rate);
     void setTempo(double t);
     double getTempo() const { return tempo.load(std::memory_order_seq_cst); }
+    // Jog nudge: temporary rate multiplier (1 + b * kBendRange), b in
+    // -1..1; 0 releases. Applied per render block on top of the tempo.
+    void setBend(double b);
+    double getBend() const { return bend.load(std::memory_order_seq_cst); }
+    static constexpr double kBendRange = 0.06; // +/-6% at full deflection
 
     // Sync helper: tempo that matches leaderEffectiveBpm given our analyzed
     // BPM, or -1 when our BPM is unknown. Pure math, unit-tested.
@@ -87,7 +92,7 @@ private:
     void renderResample(const DeckBuffer& buf, float* left, float* right,
                         int numSamples, double step);
     void renderStretch(const DeckBuffer& buf, float* left, float* right,
-                       int numSamples);
+                       int numSamples, double tempoEff);
 
     std::shared_ptr<const DeckBuffer> active; // audio thread only
     std::shared_ptr<DeckBuffer> staged;       // guarded by stageMutex
@@ -97,6 +102,7 @@ private:
     std::atomic<double> fileRate{ 44100.0 };
     std::atomic<double> outputRate{ 44100.0 };
     std::atomic<double> tempo{ 1.0 };
+    std::atomic<double> bend{ 0.0 }; // -1..1 jog nudge, see setBend
     std::atomic<double> position{ 0.0 }; // fractional frame, file domain
     SmoothFloat gain{ 1.0f };
     std::atomic<bool> playing{ false };
