@@ -53,7 +53,7 @@ void MainComponent::WaveformView::paint(juce::Graphics& g) {
         // Scrolling window centered on the playhead (clamped to the track).
         const double pos = engine.getPositionSeconds(deck);
         const double span = lean::zoomSpanSeconds(zoomIdx, len);
-        double start = pos - span * 0.35; // playhead ~1/3 in, Traktor-style
+        double start = pos - span * 0.35; // playhead ~1/3 in from the left
         start = juce::jlimit(0.0, std::max(0.0, len - span), start);
         windowStart = start; // W3: record the exact window this frame draws
         windowSpan = span;   // so click-seek uses the identical formula

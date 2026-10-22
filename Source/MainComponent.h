@@ -96,7 +96,7 @@ private:
         // windowSpan == 0 until the first paint -> whole-track fallback.
         double windowStart = 0.0;
         double windowSpan = 0.0;
-        int zoomIdx = 3; // 32 s, Traktor-like default scope (lean::kZoomSeconds)
+        int zoomIdx = 3; // 32 s default scope (lean::kZoomSeconds)
         AudioEngine& engine;
         int deck;
     };
