@@ -793,6 +793,10 @@ int fnKeyIndex(int keyCode) {
         return 7;
     return -1;
 }
+const int kFnCodes[8] = { juce::KeyPress::F1Key,  juce::KeyPress::F2Key,
+                          juce::KeyPress::F3Key,  juce::KeyPress::F4Key,
+                          juce::KeyPress::F5Key,  juce::KeyPress::F6Key,
+                          juce::KeyPress::F7Key,  juce::KeyPress::F8Key };
 } // namespace
 
 bool MainComponent::keyPressed(const juce::KeyPress& key) {
@@ -820,17 +824,6 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
         default:
             break;
     }
-    return true;
-}
-
-bool MainComponent::keyReleased(const juce::KeyPress& key) {
-    const int idx = fnKeyIndex(key.getKeyCode());
-    if (idx < 0)
-        return false;
-    fnHeld[idx] = false;
-    const int d = idx & 1;
-    if ((idx >> 1) == 1 && engine.isPreviewing(d))
-        engine.stopCuePreview(d);
     return true;
 }
 
@@ -1187,6 +1180,18 @@ void MainComponent::timerCallback() {
                               juce::dontSendNotification);
     const float chPeak[2] = { chA, chB };
     ++statusAnimTick; // G5: one animation step per tick, shared by both decks
+    // F-key transport release poll: JUCE delivers no per-key keyReleased,
+    // so held keys are checked here (one tick of cue-release latency).
+    for (int i = 0; i < 8; ++i) {
+        if (fnHeld[i] && !juce::KeyPress::isKeyCurrentlyDown(kFnCodes[i])) {
+            fnHeld[i] = false;
+            if ((i >> 1) == 1) { // cue hold: release stops the preview
+                const int d = i & 1;
+                if (engine.isPreviewing(d))
+                    engine.stopCuePreview(d);
+            }
+        }
+    }
     auto reflect = [](juce::Slider& sl, double v) {
         if (!sl.isMouseButtonDown() && std::abs(sl.getValue() - v) > 1e-4)
             sl.setValue(v, juce::dontSendNotification);

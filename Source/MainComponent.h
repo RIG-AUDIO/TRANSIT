@@ -210,9 +210,9 @@ private:
 
     void timerCallback() override;
     // F-key transport (DJ performance keys): F1/F2 play A/B, F3/F4 cue
-    // hold, F5/F6 PFL, F7/F8 load the selection to A/B.
+    // hold, F5/F6 PFL, F7/F8 load the selection to A/B. Releases are
+    // detected on the timer (JUCE has no per-key keyReleased event).
     bool keyPressed(const juce::KeyPress& key) override;
-    bool keyReleased(const juce::KeyPress& key) override;
     void openFile(int deck);
     void openFolder();
     void openSettings();
@@ -310,8 +310,9 @@ private:
     int ledPfl[2] = { -1, -1 };
     bool showBpm = true;
     CueHold cueHolds[2];
-    // F-key transport: keys currently physically held (auto-repeat guard;
-    // JUCE filters repeat releases, so one flag per F-key is enough).
+    // F-key transport: keys currently physically held (auto-repeat guard
+    // and cue-release detection; JUCE filters repeat releases, so one flag
+    // per F-key, cleared by the timer when the key goes up).
     bool fnHeld[8] = {};
     juce::String lastHeader[2];
     // Debounced library search (review S6): one-shot timer restarted on
