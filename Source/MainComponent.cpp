@@ -742,9 +742,13 @@ void MainComponent::updateFlx4Leds() {
         return;
     const int chs[2] = { (int)lean::Flx4Leds::deck1Ch, (int)lean::Flx4Leds::deck2Ch };
     for (int d = 0; d < 2; ++d) {
-        const bool playing = engine.isPlaying(d);
+        // CDJ lamp semantics: play lamp off during cue-preview hold (the
+        // deck is playing but the user is holding CUE); cue lamp lit while
+        // paused AND while holding preview.
+        const bool preview = engine.isPreviewing(d);
+        const bool playing = engine.isPlaying(d) && !preview;
         const int play = playing ? 1 : 0;
-        const int cue = playing ? 0 : 1; // lit while paused (CDJ-style ready)
+        const int cue = (!engine.isPlaying(d) || preview) ? 1 : 0;
         const int sync = engine.isSync(d) ? 1 : 0;
         const int pfl = engine.isPfl(d) ? 1 : 0;
         if (play != ledPlay[d]) {

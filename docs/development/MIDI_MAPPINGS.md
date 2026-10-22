@@ -63,6 +63,17 @@ Absolute controls are gated by a per-cell pickup while the FLX4 map is
 live: the hardware is silent until a control is moved, so the first
 gesture must not jump the app value. A cell engages when the hardware
 reaches or crosses the current app value, then follows every later tick.
+A control parked at full travel (endpoint) engages on the first tick, so
+a fader or knob left at an extreme does not require a full sweep through
+the app value to take control.
+
+Center-detented hardware knobs (trim, EQ) are remapped before the pickup
+engage: the FLX4 detent sends 0.5, but the app's detent for those targets
+sits at 0.8 normalized (gain unity = 1.0/1.25; EQ 0 dB = 24/30 on the
+−24..+6 range). A piecewise-linear remap maps each half of the hardware
+travel onto the app's range so the first touch lands exactly on the app
+value. Faders (tempo, channel, crossfader) use the plain linear mapping.
+
 Learned (non-FLX4) controls keep their existing immediate behaviour.
 
 ### Out of scope (not mapped yet)

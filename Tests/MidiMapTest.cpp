@@ -232,15 +232,51 @@ int run() {
     check(pk2.process(1, 0.5f, 0.5f) > 0.0f, "pickup lands on app value");
     lean::Pickup pk3;
     // Far apart and moving away: never engages, always silent.
-    check(pk3.process(2, 0.9f, 0.1f) < 0.0f, "pickup away 1");
-    check(pk3.process(2, 0.9f, 0.0f) < 0.0f, "pickup away 2");
-    check(pk3.process(2, 0.9f, 0.2f) < 0.0f, "pickup away 3");
+    check(pk3.process(2, 0.9f, 0.3f) < 0.0f, "pickup away 1");
+    check(pk3.process(2, 0.9f, 0.2f) < 0.0f, "pickup away 2");
+    check(pk3.process(2, 0.9f, 0.1f) < 0.0f, "pickup away 3");
     // Same-cell static value equal to app engages immediately (first tick).
     lean::Pickup pk4;
     check(pk4.process(3, 0.0f, 0.0f) >= 0.0f, "pickup equal engages");
+    // Endpoint snap-in: hardware at full travel engages on first tick.
+    lean::Pickup pkEndHi;
+    check(pkEndHi.process(4, 0.5f, 1.0f) > 0.0f, "pickup endpoint high engages");
+    lean::Pickup pkEndLo;
+    check(pkEndLo.process(5, 0.5f, 0.0f) > 0.0f, "pickup endpoint low engages");
     // Out-of-range cell passes through unfiltered.
     check(std::abs(pk.process(-1, 0.5f, 0.3f) - 0.3f) < 1e-6f,
           "pickup bad cell passthrough");
+
+    // --- center-detent knob remap (trim, EQ) ---
+    check(std::abs(lean::flx4DetentToApp(0.5f) - 0.8f) < 1e-6f,
+          "detent center -> app detent");
+    check(std::abs(lean::flx4DetentToApp(0.0f) - 0.0f) < 1e-6f,
+          "detent low -> app low");
+    check(std::abs(lean::flx4DetentToApp(1.0f) - 1.0f) < 1e-6f,
+          "detent high -> app high");
+    check(std::abs(lean::flx4DetentToApp(0.25f) - 0.4f) < 1e-6f,
+          "detent low half linear");
+    check(std::abs(lean::flx4DetentToApp(0.75f) - 0.9f) < 1e-6f,
+          "detent high half linear");
+    check(lean::flx4TargetHasDetent(lean::MidiTarget::Gain), "trim has detent");
+    check(lean::flx4TargetHasDetent(lean::MidiTarget::Low), "low has detent");
+    check(lean::flx4TargetHasDetent(lean::MidiTarget::Mid), "mid has detent");
+    check(lean::flx4TargetHasDetent(lean::MidiTarget::High), "high has detent");
+    check(!lean::flx4TargetHasDetent(lean::MidiTarget::Tempo),
+          "tempo no detent (fader)");
+    check(!lean::flx4TargetHasDetent(lean::MidiTarget::Fader),
+          "fader no detent");
+    check(!lean::flx4TargetHasDetent(lean::MidiTarget::Xfade),
+          "xfade no detent");
+
+    // EQ knobs are inverted (low at bottom, high at top).
+    check(lean::flx4TargetNeedsInvert(lean::MidiTarget::Low), "low inverted");
+    check(lean::flx4TargetNeedsInvert(lean::MidiTarget::Mid), "mid inverted");
+    check(lean::flx4TargetNeedsInvert(lean::MidiTarget::High), "high inverted");
+    check(!lean::flx4TargetNeedsInvert(lean::MidiTarget::Gain),
+          "trim not inverted");
+    check(!lean::flx4TargetNeedsInvert(lean::MidiTarget::Tempo),
+          "tempo not inverted");
 
     if (failures == 0)
         std::printf("MIDIMAP_TEST PASS\n");

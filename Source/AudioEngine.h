@@ -125,6 +125,7 @@ public:
         mixer.setCue(deck & 1, on || previewing[deck & 1]);
     }
     bool isPfl(int deck) const { return pfl[deck & 1]; }
+    bool isPreviewing(int deck) const { return previewing[deck & 1]; }
     void setCueBlend(float v) { mixer.setCueBlend(v); }
     bool hasPhones() const { return fourOuts; }
 

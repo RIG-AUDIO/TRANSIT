@@ -234,9 +234,19 @@ void AudioEngine::applyMidiEvent(const lean::MidiEvent& ev) {
             || target == lean::MidiTarget::Mid || target == lean::MidiTarget::High
             || target == lean::MidiTarget::Xfade || target == lean::MidiTarget::Blend
             || target == lean::MidiTarget::Send)) {
+        // Center-detented hardware knobs (trim, EQ): the detent sends 0.5
+        // but the app's detent for those targets sits at 0.8 normalized
+        // (unity gain / 0 dB) — remap before pickup so the first touch
+        // lands on the app value, not -9 dB. EQ knobs are inverted (low at
+        // bottom, high at top) so flip them first.
+        float hw = v01;
+        if (lean::flx4TargetNeedsInvert(target))
+            hw = 1.0f - hw;
+        if (lean::flx4TargetHasDetent(target))
+            hw = lean::flx4DetentToApp(hw);
         const int cell = (deck & 1) * 16 + (int)target;
         const float picked
-            = pickups.process(cell, currentTarget01(target, deck), v01);
+            = pickups.process(cell, currentTarget01(target, deck), hw);
         if (picked < 0.0f)
             return;
         v01 = picked;

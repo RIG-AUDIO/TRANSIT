@@ -221,6 +221,32 @@ inline bool flx4NameMatches(const char* name) {
 // complement for CCW (0x3F = -1). Returns -64..+63.
 inline int flx4Relative(std::uint8_t v) { return (int)v - 0x40; }
 
+// Center-detented knobs (trim, EQ): the hardware detent (h = 0.5) is
+// unity / 0 dB, but the app's normalized detent for those targets sits at
+// 0.8 (gain unity = 1.0/1.25; EQ 0 dB = 24/30 on the -24..+6 range). Map
+// each half linearly so full travel covers the app's full range and the
+// detent lands exactly on the app value. Applied only while the FLX4 map
+// is live; learned controls keep the plain linear mapping.
+inline float flx4DetentToApp(float h) {
+    constexpr float d = 0.8f;
+    if (h <= 0.5f)
+        return h * (d / 0.5f);
+    return d + (h - 0.5f) * ((1.0f - d) / 0.5f);
+}
+
+inline bool flx4TargetHasDetent(MidiTarget t) {
+    return t == MidiTarget::Gain || t == MidiTarget::Low
+        || t == MidiTarget::Mid || t == MidiTarget::High;
+}
+
+// FLX4 EQ knobs are inverted (low at bottom, high at top) — invert the
+// hardware value before the detent remap so turning CW increases the
+// app value. Gain/trim is not inverted.
+inline bool flx4TargetNeedsInvert(MidiTarget t) {
+    return t == MidiTarget::Low || t == MidiTarget::Mid
+        || t == MidiTarget::High;
+}
+
 // Soft takeover ("pickup") for absolute controls: the FLX4 is silent until
 // a control is moved, so the first gesture must not jump the app value.
 // A cell engages when the hardware value reaches or crosses the app value,
@@ -241,6 +267,8 @@ public:
             s.engaged = true; // crossed (or reached) the app value
         else if ((hw - app <= eps && hw - app >= -eps))
             s.engaged = true; // landed on the app value
+        else if (hw <= 0.0f || hw >= 1.0f)
+            s.engaged = true; // full travel snaps in (fader parked at an end)
         s.prev = hw;
         s.hasPrev = true;
         return s.engaged ? hw : -1.0f;
