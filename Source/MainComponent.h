@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <memory>
@@ -12,6 +13,7 @@
 #include "DJLook.h"
 #include "MidiMap.h"
 #include "TopBar.h"
+#include "UiState.h"
 
 // M3 UI: two deck strips (controls + waveform with click-seek), mixer row,
 // folder browser (double-click loads to the selected deck), master meter.
@@ -27,7 +29,7 @@ public:
     // wrappers so Tools/GuiSmoke.cpp can drive deterministic UI states
     // without reaching into private members. No behavior lives here.
     void harnessLoadFile(int deck, const juce::String& path) {
-        engine.loadFile(deck, path);
+        requestLoad(deck, path);
     }
     void harnessPlay(int deck, bool p) { engine.play(deck, p); }
     int harnessDeckState(int deck) const { return engine.deckState(deck); }
@@ -74,10 +76,19 @@ private:
             if (c != zoomIdx) {
                 zoomIdx = c;
                 repaint();
+                notifyZoomChanged();
             }
         }
+        int getZoomIndex() const { return zoomIdx; }
+        // W8: fired whenever the zoom index changes so the owner can persist
+        // it (the settings file is the only cross-session state we keep).
+        std::function<void()> onZoomChanged;
 
     private:
+        void notifyZoomChanged() {
+            if (onZoomChanged)
+                onZoomChanged();
+        }
         void paintOverview(juce::Graphics& g, int W, int mainH, int stripeH,
                            double len, double pos);
         static constexpr int kStripeHeight = 14; // whole-track overview bar
@@ -85,7 +96,7 @@ private:
         // windowSpan == 0 until the first paint -> whole-track fallback.
         double windowStart = 0.0;
         double windowSpan = 0.0;
-        int zoomIdx = 3; // 32 s, Traktor-like default scope (lean::kZoomSeconds)
+        int zoomIdx = 3; // 32 s default scope (lean::kZoomSeconds)
         AudioEngine& engine;
         int deck;
     };
@@ -185,6 +196,8 @@ private:
             juce::String folder;
             juce::String size;
             juce::String date;
+            juce::String bpm;  // G6 round 2: tempo estimate ("—" when unknown)
+            juce::String time; // G6 round 2: duration, m:ss
         };
         std::vector<Row> rows;
         std::function<void(int)> onDoubleClick;
@@ -196,6 +209,10 @@ private:
     };
 
     void timerCallback() override;
+    // F-key transport (DJ performance keys): F1/F2 play A/B, F3/F4 cue
+    // hold, F5/F6 PFL, F7/F8 load the selection to A/B. Releases are
+    // detected on the timer (JUCE has no per-key keyReleased event).
+    bool keyPressed(const juce::KeyPress& key) override;
     void openFile(int deck);
     void openFolder();
     void openSettings();
@@ -205,19 +222,35 @@ private:
     juce::File settingsFile() const;
     void loadSettings();
     void saveSettings();
+    // W9: every deck load funnels through here — applies the per-file zoom
+    // memory and remembers the path as the memory key for later zoom changes.
+    void requestLoad(int deck, const juce::String& path);
+    void rememberFileZoom(int deck);
     void refreshBrowserList();
     void loadBrowserRow(int row);
+    // G6 round 2: header-only duration probe for files that are not in the
+    // library index (no full decode, no index write).
+    juce::String probeDuration(const juce::File& file);
     void layoutDeck(DeckStrip& s, juce::Rectangle<int> panel);
     void applyEq(int deck);
     void updateDeckHeader(int deck);
     void loadMidiMap();
     void saveMidiMap();
+    // FLX4 factory map: (re)installs the routing grid (learned binds +
+    // device table when active) and drives device open/persistence.
+    void applyMidiRouting();
+    void openMidiDevice(int comboIndex); // combo item -> engine index
+    void drainFlx4Actions();
+    void updateFlx4Leds();
+    void setSyncFromUi(int deck, bool want);
     juce::Slider* sliderFor(int deck, lean::MidiTarget target);
     juce::File midiMapFile() const;
     juce::String formatTime(double seconds) const;
 
     AudioEngine engine;
     DeckStrip strips[2];
+    // G6 round 2: header-only duration probe for files outside the index.
+    juce::AudioFormatManager audioFormats;
     juce::Slider xfade{ juce::Slider::LinearHorizontal, juce::Slider::NoTextBox };
     juce::Slider cueBlend{ juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     juce::TextButton folderButton{ "Folder..." };
@@ -242,6 +275,7 @@ private:
         lean::MidiTarget target;
     };
     std::optional<PendingLearn> pending;
+    GlassPanel mixerGlass;
     juce::Label mixerCaps[3];
     juce::Label mixerHeader;
     juce::Label chanCaps[2];
@@ -266,8 +300,20 @@ private:
     AuxStrip auxStrips[4];
     juce::Component fxPage;
     uint64_t learnSeen = 0;
+    // FLX4 factory-map state (message thread only).
+    bool flx4Active = false;
+    bool shiftHeld[2] = { false, false };
+    int jogIdleTicks[2] = { 99, 99 }; // ticks since the last jog nudge
+    int ledPlay[2] = { -1, -1 };      // last LED states sent (-1 = never)
+    int ledCue[2] = { -1, -1 };
+    int ledSync[2] = { -1, -1 };
+    int ledPfl[2] = { -1, -1 };
     bool showBpm = true;
     CueHold cueHolds[2];
+    // F-key transport: keys currently physically held (auto-repeat guard
+    // and cue-release detection; JUCE filters repeat releases, so one flag
+    // per F-key, cleared by the timer when the key goes up).
+    bool fnHeld[8] = {};
     juce::String lastHeader[2];
     // Debounced library search (review S6): one-shot timer restarted on
     // every keystroke; refreshBrowserList runs when typing pauses.
@@ -282,6 +328,18 @@ private:
     float meterShown = 0.0f; // G4: dB-mapped unit (0..1)
     MeterHold meterHold;
     int statusAnimTick = 0; // G5: drives the LOADING... dot animation
+    // W8: set while the stored zoom index is restored at startup, so the
+    // restore itself does not write the settings file back.
+    bool suppressZoomSave = false;
+    // W9: parsed settings state — the per-file zoom store lives here; the
+    // zoom/scroll fields are re-read from the views at save time.
+    lean::UiState uiState;
+    // W9: stored browser scroll position (permille of the list's scroll
+    // range), applied once after the first real population (-1 = nothing
+    // to restore).
+    int pendingScroll = -1;
+    // W9: full path requested per deck — the key for the zoom memory.
+    juce::String deckPath[2];
     // G8 finish: per-deck change tokens for waveform invalidation.
     int waveStateSeen[2] = { -1, -1 };
     int64_t wavePosSeen[2] = { 0, 0 };

@@ -6,8 +6,9 @@
 
 // TRANSIT look — the "Modern" theme. A future "Vintage" theme will
 // subclass this same LookAndFeel contract; not started, see README.
-// Dark console theme: deep graphite surfaces, thin lit borders, one accent
-// amber (transport), cool cyan (information), alarm red (record/clip/danger).
+// Dark console theme: blue-gray surfaces, thin lit borders, one accent
+// amber (transport), cool cyan (information), alarm red (record/clip/
+// danger), blue focus ring for keyboard navigation.
 // Applied as the single LookAndFeel of MainComponent.
 class DJLook : public juce::LookAndFeel_V4 {
 public:
@@ -21,6 +22,7 @@ public:
     static const juce::Colour alarm;    // record, clipping
     static const juce::Colour ink;      // primary text
     static const juce::Colour dimInk;   // secondary text
+    static const juce::Colour focus;    // keyboard focus ring
 
     // Shared glass-panel language (top bar, browser, future panels).
     static void drawGlassPanel(juce::Graphics& g, juce::Rectangle<float> area,

@@ -87,9 +87,16 @@ plus `WaveformView::setZoomIndex`; behavior stays in the engine/view classes.
    29 PNGs total, named `<state>-<w>x<h>.png` (pixel dimensions; the
    `hidpi` frame is named `hidpi-2560x1600.png`). Meter levels in the
    pass-2 frames come from the `harnessSetMeters` seam (G4), since CI
-   has no audio device; the browser folder is seeded via
-   `harnessSetBrowserPath(outDir)` (G6), so every frame also shows the
-   two fixture rows with metadata columns and the selection pill.
+  has no audio device; the browser folder is seeded via
+  `harnessSetBrowserPath(outDir)` (G6), so every frame also shows the
+  two fixture rows with metadata columns (name, tempo, duration, folder,
+  size, date — the tempo is `—` because the fixture tracks are not in the
+  library index) and the selection pill. Frames stay deterministic under
+  the W9 persistence rules: the fixtures are loaded before any zoom
+  change and no file is reloaded mid-run, so the per-file zoom memory
+  never applies during a run, and the stored browser scroll is 0 on a
+  fresh runner (settings written at exit or by the lifecycle cycles hold
+  defaults — the harness's final zoom is the default index 3).
 4. **Phase-1 validation per frame** (any failure exits non-zero and fails
    the job):
    - file exists and is non-empty,
@@ -135,3 +142,16 @@ xvfb-run -a -s "-screen 0 2560x1440x24" \
 `<build>/<target>_artefacts/<CONFIG>/`.)
 
 Exit code 0 and a final `GUI_SMOKE ok` line mean all frames passed phase 1.
+
+**Cross-run pixel comparisons.** Byte-comparing PNGs from two different
+runs is meaningless: four elements are legitimately nondeterministic
+run-to-run — the top-bar clock (HH:MM), the master history ring's leading
+edge, the bottom master bar's gradient edge, and the mixer meter column
+(peak-hold decay phase; x at the window centre, y ≈ 358–380). Two runs of
+*identical* code differ by ~1300 pixels in those regions (plus ~116 clock
+pixels). A content-neutrality check must therefore mask: `y < 50`,
+`y > 1050`, and the top-right `200×40` clock box — and the harness's own
+phase-1 gate (dimensions + brightness fraction) already tolerates all of
+them. This was established while verifying that round 3 (W9) changed no
+frames: W9-vs-pre differed *less* (686 px, all in the masked regions)
+than pre-vs-pre (1302 px).

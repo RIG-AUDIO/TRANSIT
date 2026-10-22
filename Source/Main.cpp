@@ -37,6 +37,12 @@ private:
             setContentOwned(new MainComponent(), true);
             setVisible(true);
             setFullScreen(true);
+            // Keep the content component in the key focus chain so the
+            // transport F-keys work from the very first press (keys bubble
+            // up from the focused child; before any click, focus must live
+            // on the content, not the window itself).
+            if (getContentComponent() != nullptr)
+                getContentComponent()->grabKeyboardFocus();
         }
 
         void closeButtonPressed() override {

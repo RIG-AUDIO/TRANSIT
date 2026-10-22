@@ -3,6 +3,7 @@
 #include "MainComponent.h"
 
 #include <cstdio>
+#include <map>
 
 #include "SettingsDialog.h"
 
@@ -19,6 +20,7 @@ void MainComponent::WaveformView::zoomIn() {
     if (idx != zoomIdx) {
         zoomIdx = idx;
         repaint(); // W4: zoom changes repaint explicitly, not via the timer
+        notifyZoomChanged(); // W8: persist the zoom index across sessions
     }
 }
 
@@ -27,6 +29,7 @@ void MainComponent::WaveformView::zoomOut() {
     if (idx != zoomIdx) {
         zoomIdx = idx;
         repaint(); // W4
+        notifyZoomChanged(); // W8
     }
 }
 
@@ -50,7 +53,7 @@ void MainComponent::WaveformView::paint(juce::Graphics& g) {
         // Scrolling window centered on the playhead (clamped to the track).
         const double pos = engine.getPositionSeconds(deck);
         const double span = lean::zoomSpanSeconds(zoomIdx, len);
-        double start = pos - span * 0.35; // playhead ~1/3 in, Traktor-style
+        double start = pos - span * 0.35; // playhead ~1/3 in from the left
         start = juce::jlimit(0.0, std::max(0.0, len - span), start);
         windowStart = start; // W3: record the exact window this frame draws
         windowSpan = span;   // so click-seek uses the identical formula
@@ -176,8 +179,8 @@ void MainComponent::CueHold::mouseUp(const juce::MouseEvent&) {
 
 void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w,
                                               int h, bool selected) {
-    // G6 columns: name | folder | size | date, all precomputed in the
-    // model; the metadata columns drop out on narrow lists instead of
+    // G6 columns: name | bpm | time | folder | size | date, all precomputed
+    // in the model; the metadata columns drop out on narrow lists instead of
     // clipping. Selected rows keep the flat info-cyan pill (G2).
     if (selected) {
         auto area = juce::Rectangle<float>((float)w - 8.0f, (float)h - 4.0f)
@@ -194,14 +197,28 @@ void MainComponent::FileList::paintListBoxItem(int row, juce::Graphics& g, int w
     const int dateW = w >= 480 ? 92 : 0;
     const int sizeW = w >= 480 ? 78 : 0;
     const int folderW = w >= 320 ? 96 : 0;
+    const int timeW = w >= 640 ? 56 : 0;
+    const int bpmW = w >= 760 ? 64 : 0;
     int x = 12;
-    const int nameW = w - 20 - dateW - sizeW - folderW;
+    const int nameW = w - 20 - dateW - sizeW - folderW - timeW - bpmW;
     if (nameW > 40) {
         g.drawText(r.name, x, 0, nameW, h, juce::Justification::centredLeft,
                    true);
         x += nameW;
     }
     const auto metaColour = selected ? DJLook::bg : DJLook::dimInk;
+    if (bpmW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.bpm, x, 0, bpmW - 8, h,
+                   juce::Justification::centredRight, true);
+        x += bpmW;
+    }
+    if (timeW > 0) {
+        g.setColour(metaColour);
+        g.drawText(r.time, x, 0, timeW - 8, h,
+                   juce::Justification::centredRight, true);
+        x += timeW;
+    }
     if (folderW > 0) {
         g.setColour(metaColour);
         g.drawText(r.folder, x, 0, folderW, h, juce::Justification::centredLeft,
@@ -233,6 +250,8 @@ void MainComponent::FileList::returnKeyPressed(int row) {
 
 MainComponent::MainComponent() : fileList("browser", &fileModel) {
     setLookAndFeel(&look);
+    setWantsKeyboardFocus(true); // transport F-keys start here, then bubble
+    audioFormats.registerBasicFormats(); // G6 round 2: duration probes
     const char* names[2] = { "A", "B" };
     const char* knobNames[4] = { "GAIN", "LOW", "MID", "HIGH" };
     for (int d = 0; d < 2; ++d) {
@@ -273,6 +292,14 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
             s.knobCaps[k].setVisible(d == 0);
         }
         s.wave = std::make_unique<WaveformView>(engine, d);
+        // W8/W9: persist the zoom index whenever it changes (button, wheel
+        // or programmatic set) and remember it under the deck's file.
+        s.wave->onZoomChanged = [this, d] {
+            if (suppressZoomSave)
+                return;
+            rememberFileZoom(d);
+            saveSettings();
+        };
         addAndMakeVisible(s.wave.get());
         s.zoomInBtn.onClick = [this, d] {
             if (strips[d].wave)
@@ -291,14 +318,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         };
         s.sync.setClickingTogglesState(true);
         s.sync.onClick = [this, d] {
-            const bool want = strips[d].sync.getToggleState();
-            if (want && !engine.setSync(d, true)) {
-                strips[d].sync.setToggleState(false, juce::dontSendNotification);
-                sysStatus.setText("SYNC needs analyzed BPM on both decks",
-                                  juce::dontSendNotification);
-            } else if (!want) {
-                engine.setSync(d, false);
-            }
+            setSyncFromUi(d, strips[d].sync.getToggleState());
         };
         s.key.setClickingTogglesState(true);
         s.key.onClick = [this, d] { engine.setKeylock(d, strips[d].key.getToggleState()); };
@@ -448,9 +468,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     for (const auto& name : engine.midiInputNames())
         midiCombo.addItem(name, midiCombo.getNumItems() + 1);
     midiCombo.setSelectedId(1, juce::dontSendNotification);
-    midiCombo.onChange = [this] {
-        engine.openMidiInput(midiCombo.getSelectedId() - 2);
-    };
+    midiCombo.onChange = [this] { openMidiDevice(midiCombo.getSelectedId() - 2); };
     learnButton.setClickingTogglesState(true);
     learnButton.onClick = [this] {
         if (!learnButton.getToggleState())
@@ -515,6 +533,8 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
     }
     fxPage.setVisible(false);
     sysStatus.setText("MIDI: none", juce::dontSendNotification);
+    addAndMakeVisible(mixerGlass);
+    mixerGlass.toBack();
     addAndMakeVisible(mixerHeader);
     mixerHeader.setText("MIXER", juce::dontSendNotification);
     mixerHeader.setJustificationType(juce::Justification::centred);
@@ -530,10 +550,9 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
         chanCaps[d].setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f)).boldened());
     }
     loadMidiMap();
-    // Replay the persisted map into the engine's realtime grid.
-    engine.clearMidiGrid();
-    for (const auto& b : midiMap.all())
-        engine.bindMidi(b.channel, b.cc, b.deck, b.target);
+    // Replay the persisted map into the engine's realtime grid (+ the FLX4
+    // table once a matching device is opened; loadSettings does that).
+    applyMidiRouting();
     loadSettings();
 
     setSize(1100, 824);
@@ -541,6 +560,7 @@ MainComponent::MainComponent() : fileList("browser", &fileModel) {
 }
 
 MainComponent::~MainComponent() {
+    saveSettings(); // W9: capture browser scroll + per-file zoom at exit
     setLookAndFeel(nullptr);
 }
 
@@ -575,6 +595,9 @@ juce::Slider* MainComponent::sliderFor(int deck, lean::MidiTarget target) {
         case lean::MidiTarget::Master: return &topBar.masterKnob;
         case lean::MidiTarget::Blend: return &cueBlend;
         case lean::MidiTarget::Phones: return &topBar.phonesKnob;
+        // Send rides the per-deck AUX knob; learn reflection uses the
+        // channel strip's send slider via the FLX4 path only.
+        case lean::MidiTarget::Send: return nullptr;
         case lean::MidiTarget::None: return nullptr;
     }
     return nullptr;
@@ -597,6 +620,213 @@ void MainComponent::saveMidiMap() {
     f.replaceWithText(midiMap.save());
 }
 
+void MainComponent::applyMidiRouting() {
+    engine.clearMidiGrid();
+    for (const auto& b : midiMap.all())
+        engine.bindMidi(b.channel, b.cc, b.deck, b.target);
+    // Installs the FLX4 value table (14-bit pairs) when a matching device
+    // is open; a plain clear+relearn above keeps learned binds intact.
+    engine.setFlx4Mode(flx4Active);
+}
+
+void MainComponent::openMidiDevice(int engineIndex) {
+    engine.openMidiInput(engineIndex);
+    flx4Active = false;
+    shiftHeld[0] = shiftHeld[1] = false;
+    for (int d = 0; d < 2; ++d)
+        engine.setBend(d, 0.0);
+    const auto names = engine.midiInputNames();
+    if (engineIndex >= 0 && engineIndex < names.size()) {
+        const juce::String name = names[engineIndex];
+        uiState.midi = name.toStdString();
+        if (lean::flx4NameMatches(name.toRawUTF8())) {
+            flx4Active = true;
+            sysStatus.setText("MIDI: DDJ-FLX4 mapped", juce::dontSendNotification);
+        } else {
+            sysStatus.setText("MIDI: " + name, juce::dontSendNotification);
+        }
+    } else {
+        uiState.midi.clear();
+        sysStatus.setText("MIDI: none", juce::dontSendNotification);
+    }
+    applyMidiRouting();
+    if (flx4Active)
+        engine.sendFlx4SysEx(lean::kFlx4ResyncSysEx,
+                             (int)sizeof(lean::kFlx4ResyncSysEx));
+    // LED cache invalidated; the next timer tick resends every LED.
+    for (int d = 0; d < 2; ++d)
+        ledPlay[d] = ledCue[d] = ledSync[d] = ledPfl[d] = -1;
+}
+
+void MainComponent::setSyncFromUi(int deck, bool want) {
+    if (want && !engine.setSync(deck, true)) {
+        strips[deck].sync.setToggleState(false, juce::dontSendNotification);
+        sysStatus.setText("SYNC needs analyzed BPM on both decks",
+                          juce::dontSendNotification);
+        return;
+    }
+    if (!want)
+        engine.setSync(deck, false);
+    strips[deck].sync.setToggleState(want, juce::dontSendNotification);
+}
+
+void MainComponent::drainFlx4Actions() {
+    lean::Flx4ActionMsg msgs[16];
+    const int n = engine.drainFlx4Actions(msgs, 16);
+    for (int i = 0; i < n; ++i) {
+        const auto& m = msgs[i];
+        const auto action = (lean::Flx4Action)m.action;
+        const int d = m.deck & 1;
+        switch (action) {
+            case lean::Flx4Action::Play:
+                if (m.pressed != 0) {
+                    const bool want = !engine.isPlaying(d);
+                    engine.play(d, want);
+                    strips[d].play.setToggleState(want,
+                                                  juce::dontSendNotification);
+                }
+                break;
+            case lean::Flx4Action::Cue:
+                if (m.pressed != 0)
+                    engine.startCuePreview(d);
+                else
+                    engine.stopCuePreview(d);
+                break;
+            case lean::Flx4Action::Sync:
+                if (m.pressed != 0)
+                    setSyncFromUi(d, !engine.isSync(d));
+                break;
+            case lean::Flx4Action::Pfl:
+                if (m.pressed != 0) {
+                    const bool want = !engine.isPfl(d);
+                    engine.setPfl(d, want);
+                    strips[d].pfl.setToggleState(want,
+                                                 juce::dontSendNotification);
+                }
+                break;
+            case lean::Flx4Action::Shift:
+                shiftHeld[d] = m.pressed != 0;
+                break;
+            case lean::Flx4Action::Load:
+                if (m.pressed != 0) {
+                    toB.setToggleState(d == 1, juce::dontSendNotification);
+                    loadBrowserRow(fileList.getSelectedRow());
+                }
+                break;
+            case lean::Flx4Action::BrowsePress:
+                if (m.pressed != 0)
+                    loadBrowserRow(fileList.getSelectedRow());
+                break;
+            case lean::Flx4Action::BrowseScroll: {
+                const int maxRow
+                    = juce::jmax(0, (int)fileModel.rows.size() - 1);
+                const int row = juce::jlimit(
+                    0, maxRow, fileList.getSelectedRow() + m.delta);
+                fileList.selectRow(row);
+                break;
+            }
+            case lean::Flx4Action::JogNudge:
+                engine.setBend(d, juce::jlimit(-1.0, 1.0, (double)m.delta / 32.0));
+                jogIdleTicks[d] = 0;
+                break;
+            case lean::Flx4Action::JogSearch:
+                engine.jumpBeats(d, (double)juce::jlimit(-16, 16, (int)m.delta));
+                break;
+            case lean::Flx4Action::None:
+                break;
+        }
+    }
+}
+
+void MainComponent::updateFlx4Leds() {
+    if (!flx4Active)
+        return;
+    const int chs[2] = { (int)lean::Flx4Leds::deck1Ch, (int)lean::Flx4Leds::deck2Ch };
+    for (int d = 0; d < 2; ++d) {
+        // CDJ lamp semantics: play lamp off during cue-preview hold (the
+        // deck is playing but the user is holding CUE); cue lamp lit while
+        // paused AND while holding preview.
+        const bool preview = engine.isPreviewing(d);
+        const bool playing = engine.isPlaying(d) && !preview;
+        const int play = playing ? 1 : 0;
+        const int cue = (!engine.isPlaying(d) || preview) ? 1 : 0;
+        const int sync = engine.isSync(d) ? 1 : 0;
+        const int pfl = engine.isPfl(d) ? 1 : 0;
+        if (play != ledPlay[d]) {
+            ledPlay[d] = play;
+            engine.sendFlx4Note(chs[d], lean::Flx4Leds::play, play != 0);
+        }
+        if (cue != ledCue[d]) {
+            ledCue[d] = cue;
+            engine.sendFlx4Note(chs[d], lean::Flx4Leds::cue, cue != 0);
+        }
+        if (sync != ledSync[d]) {
+            ledSync[d] = sync;
+            engine.sendFlx4Note(chs[d], lean::Flx4Leds::sync, sync != 0);
+        }
+        if (pfl != ledPfl[d]) {
+            ledPfl[d] = pfl;
+            engine.sendFlx4Note(chs[d], lean::Flx4Leds::pfl, pfl != 0);
+        }
+    }
+}
+
+// F-key transport: index 0..7 maps to deck (index & 1) and action
+// (index >> 1): play, cue hold, PFL, load selection.
+namespace {
+int fnKeyIndex(int keyCode) {
+    if (keyCode == juce::KeyPress::F1Key)
+        return 0;
+    if (keyCode == juce::KeyPress::F2Key)
+        return 1;
+    if (keyCode == juce::KeyPress::F3Key)
+        return 2;
+    if (keyCode == juce::KeyPress::F4Key)
+        return 3;
+    if (keyCode == juce::KeyPress::F5Key)
+        return 4;
+    if (keyCode == juce::KeyPress::F6Key)
+        return 5;
+    if (keyCode == juce::KeyPress::F7Key)
+        return 6;
+    if (keyCode == juce::KeyPress::F8Key)
+        return 7;
+    return -1;
+}
+const int kFnCodes[8] = { juce::KeyPress::F1Key,  juce::KeyPress::F2Key,
+                          juce::KeyPress::F3Key,  juce::KeyPress::F4Key,
+                          juce::KeyPress::F5Key,  juce::KeyPress::F6Key,
+                          juce::KeyPress::F7Key,  juce::KeyPress::F8Key };
+} // namespace
+
+bool MainComponent::keyPressed(const juce::KeyPress& key) {
+    const int idx = fnKeyIndex(key.getKeyCode());
+    if (idx < 0)
+        return false;
+    if (fnHeld[idx])
+        return true; // auto-repeat: the action already ran on first press
+    fnHeld[idx] = true;
+    const int d = idx & 1;
+    switch (idx >> 1) {
+        case 0:
+            strips[d].play.triggerClick();
+            break;
+        case 1:
+            engine.startCuePreview(d);
+            break;
+        case 2:
+            strips[d].pfl.triggerClick();
+            break;
+        case 3:
+            toB.setToggleState(d == 1, juce::dontSendNotification);
+            loadBrowserRow(fileList.getSelectedRow());
+            break;
+        default:
+            break;
+    }
+    return true;
+}
+
 void MainComponent::openFile(int deck) {
     auto chooser = std::make_shared<juce::FileChooser>(
         "Open audio file", browserDir, "*.wav;*.mp3;*.flac;*.ogg;*.m4a;*.aac;*.mp4");
@@ -608,7 +838,7 @@ void MainComponent::openFile(int deck) {
                 return;
             // Async: the status line follows engine.deckState() from the
             // 30 Hz timer (Loading -> filename or error).
-            engine.loadFile(deck, file.getFullPathName());
+            requestLoad(deck, file.getFullPathName());
         });
 }
 
@@ -664,7 +894,17 @@ void MainComponent::loadSettings() {
     bool eco = false;
     juce::StringArray auxPaths;
     if (f.existsAsFile()) {
-        for (const auto& ln : juce::StringArray::fromLines(f.loadFileAsString())) {
+        const auto text = f.loadFileAsString();
+        // W8/W9: restore the per-deck zoom index, the browser top row and
+        // the per-file zoom memory (unknown or malformed values keep the
+        // defaults).
+        uiState = lean::parseUiState(text.toStdString());
+        pendingScroll = uiState.scroll;
+        suppressZoomSave = true;
+        for (int d = 0; d < 2; ++d)
+            strips[d].wave->setZoomIndex(uiState.zoom[d]);
+        suppressZoomSave = false;
+        for (const auto& ln : juce::StringArray::fromLines(text)) {
             if (ln.startsWith("mode="))
                 sync = ln.substring(5).trim() == "sync";
             else if (ln.startsWith("showBpm="))
@@ -677,6 +917,17 @@ void MainComponent::loadSettings() {
     }
     engine.setKeylockEco(eco);
     setBeatModeUI(sync);
+    // FLX4 round 5: restore the last-selected MIDI device (exact name match).
+    if (!uiState.midi.empty()) {
+        const juce::String want(uiState.midi);
+        for (int i = 0; i < midiCombo.getNumItems(); ++i) {
+            if (midiCombo.getItemText(i) == want) {
+                midiCombo.setSelectedId(i + 1, juce::dontSendNotification);
+                openMidiDevice(i - 1); // item 0 = "(no MIDI)" -> engine -1
+                break;
+            }
+        }
+    }
     // Reload persisted aux plugins (slow ones cost startup time; failures
     // only land in the status line, never crash startup).
     for (int a = 0; a < 4 && a < auxPaths.size(); ++a) {
@@ -702,6 +953,15 @@ void MainComponent::saveSettings() {
     text += juce::String("keyEco=") + (engine.keylockEco() ? "1" : "0") + "\n";
     for (int a = 0; a < 4; ++a)
         text += "aux" + juce::String(a) + "=" + engine.auxPath(a) + "\n";
+    // W8/W9: cross-session UI state — live zoom per deck, live browser
+    // scroll (permille of the list's scroll range), and the accumulated
+    // per-file zoom memory.
+    lean::UiState ui = uiState;
+    for (int d = 0; d < 2; ++d)
+        ui.zoom[d] = strips[d].wave ? strips[d].wave->getZoomIndex() : 3;
+    ui.scroll = juce::jlimit(
+        0, 1000, (int)(fileList.getVerticalPosition() * 1000.0 + 0.5));
+    text += juce::String(lean::serializeUiState(ui));
     const auto f = settingsFile();
     f.getParentDirectory().createDirectory();
     f.replaceWithText(text);
@@ -793,6 +1053,17 @@ void MainComponent::refreshBrowserList() {
         paths.sort(true);
     }
     // G6: precompute display metadata once per refresh; paint is I/O-free.
+    // Round 2 adds the tempo estimate and duration: the tempo comes from the
+    // library index (analysed at scan time), the duration from the index or
+    // from a header-only probe when the track was never indexed.
+    std::vector<std::string> pathStd;
+    pathStd.reserve((size_t)paths.size());
+    for (const auto& p : paths)
+        pathStd.push_back(p.toStdString());
+    std::map<std::string, lean::Library::TrackMeta> indexed;
+    for (const auto& kv : engine.libraryMetadata(pathStd))
+        indexed.emplace(kv.first, kv.second);
+
     fileModel.rows.clear();
     fileModel.rows.reserve((size_t)paths.size());
     for (int i = 0; i < paths.size(); ++i) {
@@ -803,9 +1074,36 @@ void MainComponent::refreshBrowserList() {
         row.folder = f.getParentDirectory().getFileName();
         row.size = juce::File::descriptionOfSizeInBytes(f.getSize());
         row.date = f.getLastModificationTime().formatted("%Y-%m-%d");
+        const auto it = indexed.find(row.path.toStdString());
+        if (it != indexed.end()) {
+            if (it->second.bpm > 0.0)
+                row.bpm = juce::String(it->second.bpm, 1);
+            if (it->second.seconds > 0.0)
+                row.time = formatTime(it->second.seconds);
+        }
+        if (row.bpm.isEmpty())
+            row.bpm = juce::String::charToString(0x2014); // em dash: tempo unknown
+        if (row.time.isEmpty())
+            row.time = probeDuration(f);
         fileModel.rows.push_back(std::move(row));
     }
     fileList.updateContent();
+    // W9: apply the stored list position once, after the first real
+    // population (an empty refresh keeps it pending for the next one).
+    // setVerticalPosition is a no-op when every row already fits.
+    if (pendingScroll >= 0 && !fileModel.rows.empty()) {
+        fileList.setVerticalPosition((double)pendingScroll / 1000.0);
+        pendingScroll = -1;
+    }
+}
+
+juce::String MainComponent::probeDuration(const juce::File& file) {
+    // Header-only read: no sample data is decoded, no index is written.
+    std::unique_ptr<juce::AudioFormatReader> reader(
+        audioFormats.createReaderFor(file));
+    if (!reader || reader->sampleRate <= 0.0 || reader->lengthInSamples <= 0)
+        return {};
+    return formatTime((double)reader->lengthInSamples / reader->sampleRate);
 }
 
 void MainComponent::loadBrowserRow(int row) {
@@ -813,7 +1111,27 @@ void MainComponent::loadBrowserRow(int row) {
         return;
     const int deck = toB.getToggleState() ? 1 : 0;
     const juce::File file(fileModel.rows[(size_t)row].path);
-    engine.loadFile(deck, file.getFullPathName()); // async; status via timer
+    requestLoad(deck, file.getFullPathName()); // async; status via timer
+}
+
+void MainComponent::requestLoad(int deck, const juce::String& path) {
+    deckPath[deck & 1] = {};
+    // Applying a stored zoom must not be mistaken for a user zoom change
+    // (it would re-record the entry it just read).
+    suppressZoomSave = true;
+    if (const int* z = lean::findFileZoom(uiState, path.toStdString()))
+        strips[deck & 1].wave->setZoomIndex(*z);
+    suppressZoomSave = false;
+    deckPath[deck & 1] = path;
+    engine.loadFile(deck, path);
+}
+
+void MainComponent::rememberFileZoom(int deck) {
+    const juce::String& p = deckPath[deck & 1];
+    if (p.isEmpty() || !strips[deck & 1].wave)
+        return;
+    lean::putFileZoom(uiState, p.toStdString(),
+                      strips[deck & 1].wave->getZoomIndex());
 }
 
 juce::String MainComponent::formatTime(double seconds) const {
@@ -862,6 +1180,18 @@ void MainComponent::timerCallback() {
                               juce::dontSendNotification);
     const float chPeak[2] = { chA, chB };
     ++statusAnimTick; // G5: one animation step per tick, shared by both decks
+    // F-key transport release poll: JUCE delivers no per-key keyReleased,
+    // so held keys are checked here (one tick of cue-release latency).
+    for (int i = 0; i < 8; ++i) {
+        if (fnHeld[i] && !juce::KeyPress::isKeyCurrentlyDown(kFnCodes[i])) {
+            fnHeld[i] = false;
+            if ((i >> 1) == 1) { // cue hold: release stops the preview
+                const int d = i & 1;
+                if (engine.isPreviewing(d))
+                    engine.stopCuePreview(d);
+            }
+        }
+    }
     auto reflect = [](juce::Slider& sl, double v) {
         if (!sl.isMouseButtonDown() && std::abs(sl.getValue() - v) > 1e-4)
             sl.setValue(v, juce::dontSendNotification);
@@ -996,6 +1326,18 @@ void MainComponent::timerCallback() {
                 strips[d].wave->repaint();
         }
     }
+    // FLX4 round 5: drain note events (transport/cue/shift/load/jog),
+    // jog nudge release after 3 idle ticks (~100 ms), and LED echo.
+    if (flx4Active) {
+        drainFlx4Actions();
+        for (int d = 0; d < 2; ++d) {
+            if (jogIdleTicks[d] < 99)
+                ++jogIdleTicks[d];
+            if (jogIdleTicks[d] == 3)
+                engine.setBend(d, 0.0);
+        }
+        updateFlx4Leds();
+    }
     repaint(getLocalBounds().removeFromBottom(26));
 }
 
@@ -1027,7 +1369,7 @@ void MainComponent::paint(juce::Graphics& g) {
 }
 
 void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
-    auto headRow = panel.removeFromTop(28);
+    auto headRow = panel.removeFromTop(36);
     s.header.setBounds(headRow.removeFromLeft(headRow.getWidth() - 140));
     headRow.removeFromLeft(6);
     s.sync.setBounds(headRow.removeFromLeft(58));
@@ -1035,24 +1377,27 @@ void MainComponent::layoutDeck(DeckStrip& s, juce::Rectangle<int> panel) {
     s.zoomOutBtn.setBounds(headRow.removeFromLeft(32));
     headRow.removeFromLeft(6);
     s.zoomInBtn.setBounds(headRow.removeFromLeft(32));
-    auto buttons = panel.removeFromTop(30);
-    s.open.setBounds(buttons.removeFromLeft(64));
+    auto buttons = panel.removeFromTop(56);
+    s.open.setBounds(buttons.removeFromLeft(64).withSizeKeepingCentre(64, 40));
     buttons.removeFromLeft(5);
-    s.play.setBounds(buttons.removeFromLeft(52));
+    s.play.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
     buttons.removeFromLeft(5);
-    s.cue.setBounds(buttons.removeFromLeft(52));
+    s.cue.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
     buttons.removeFromLeft(5);
-    s.key.setBounds(buttons.removeFromLeft(52));
-    auto statusRow = panel.removeFromTop(22);
-    s.stateChip.setBounds(statusRow.removeFromLeft(86));
+    s.key.setBounds(buttons.removeFromLeft(52).withSizeKeepingCentre(52, 40));
+    auto statusRow = panel.removeFromTop(34);
+    s.stateChip.setBounds(
+        statusRow.removeFromLeft(86).withSizeKeepingCentre(86, 24));
     s.status.setBounds(statusRow);
-    auto timeRow = panel.removeFromTop(20);
-    s.back.setBounds(timeRow.removeFromLeft(40));
+    auto timeRow = panel.removeFromTop(50);
+    s.back.setBounds(timeRow.removeFromLeft(40).withSizeKeepingCentre(40, 30));
     timeRow.removeFromLeft(6);
-    s.fwd.setBounds(timeRow.removeFromRight(40));
+    s.fwd.setBounds(timeRow.removeFromRight(40).withSizeKeepingCentre(40, 30));
     timeRow.removeFromRight(6);
     s.time.setBounds(timeRow);
-    s.tempo.setBounds(panel.removeFromTop(30));
+    s.tempo.setBounds(panel.removeFromTop(64));
+    // Bounded waveform band (main + overview stripe): the strip height is
+    // set by resized() so the deck column never swallows the window.
     if (s.wave)
         s.wave->setBounds(panel.reduced(0, 2));
 }
@@ -1063,7 +1408,17 @@ void MainComponent::resized() {
     topBar.setBounds(full.removeFromTop(64));
     auto area = full.reduced(12);
     area.removeFromBottom(34); // meter
-    auto browser = area.removeFromBottom(220);
+    // Proportioned deck band: the waveform strip is a bounded row inside
+    // the deck (main + overview stripe), so the deck column keeps a fixed
+    // content height and the library takes everything else. The clamp
+    // guarantees the browser keeps its 220 px floor at every window size.
+    constexpr int kStripRows = 240; // header+transport+status+time+tempo
+    constexpr int kWaveCap = 190;   // main waveform + overview stripe
+    const int avail = area.getHeight();
+    const int cap = getLocalBounds().getHeight() >= 1200 ? 230 : kWaveCap;
+    const int waveH = juce::jlimit(110, cap, avail - 8 - 220 - kStripRows - 4);
+    const int deckH = kStripRows + 4 + waveH;
+    auto browser = area.removeFromBottom(avail - 8 - deckH);
     area.removeFromBottom(8);
 
     // Club layout: deck | mixer | deck.
@@ -1075,11 +1430,13 @@ void MainComponent::resized() {
     area.removeFromLeft(12);
     layoutDeck(strips[1], area);
 
-    // Mixer strip: header, channel caps, 4 knob rows, PFL + faders, xfade row.
-    // PFL sits with the faders, DJM-style, not at the top.
-    mixerHeader.setBounds(center.removeFromTop(28));
+    // Mixer strip: glass panel, header, channel caps, 4 knob rows,
+    // PFL + faders, xfade row pinned to the bottom (DJM-style).
+    mixerGlass.setBounds(center);
+    center = center.reduced(10, 8);
+    mixerHeader.setBounds(center.removeFromTop(24));
 
-    auto chanRow = center.removeFromTop(18);
+    auto chanRow = center.removeFromTop(16);
     chanRow.removeFromLeft(56);
     chanCaps[0].setBounds(chanRow.removeFromLeft(chanRow.getWidth() / 2));
     chanCaps[1].setBounds(chanRow);
@@ -1089,30 +1446,33 @@ void MainComponent::resized() {
     juce::Slider* knobsB[4] = { &strips[1].gain, &strips[1].low, &strips[1].mid,
                                 &strips[1].high };
     for (int k = 0; k < 4; ++k) {
-        auto row = center.removeFromTop(44);
+        auto row = center.removeFromTop(42);
         strips[0].knobCaps[k].setBounds(row.removeFromLeft(56));
         const int cw = row.getWidth() / 2;
         knobsA[k]->setBounds(row.removeFromLeft(cw).reduced(10, 2));
         knobsB[k]->setBounds(row.reduced(10, 2));
     }
 
-    auto fadRow = center.removeFromTop(190);
+    auto fadRow =
+        center.removeFromTop(juce::jlimit(160, 320, center.getHeight() - 58));
     const int fw = fadRow.getWidth() / 2;
     auto colA = fadRow.removeFromLeft(fw);
     strips[0].pfl.setBounds(colA.removeFromTop(28).withSizeKeepingCentre(84, 24));
     chanMeters[0].setBounds(colA.removeFromLeft(14).reduced(0, 6));
-    strips[0].fader.setBounds(colA.withSizeKeepingCentre(40, 162));
+    strips[0].fader.setBounds(
+        colA.withSizeKeepingCentre(40, juce::jmax(120, colA.getHeight() - 36)));
     strips[1].pfl.setBounds(fadRow.removeFromTop(28).withSizeKeepingCentre(84, 24));
     chanMeters[1].setBounds(fadRow.removeFromLeft(14).reduced(0, 6));
-    strips[1].fader.setBounds(fadRow.withSizeKeepingCentre(40, 162));
+    strips[1].fader.setBounds(
+        fadRow.withSizeKeepingCentre(40, juce::jmax(120, fadRow.getHeight() - 36)));
 
-    auto xRow = center;
+    auto xRow = center.removeFromBottom(juce::jmin(58, center.getHeight()));
     mixerCaps[0].setBounds(xRow.removeFromLeft(56));
     xRow.removeFromLeft(4);
     auto blendCol = xRow.removeFromRight(56);
-    xfade.setBounds(xRow);
     mixerCaps[2].setBounds(blendCol.removeFromTop(14));
     cueBlend.setBounds(blendCol);
+    xfade.setBounds(xRow.reduced(0, 14));
 
     auto brow = browser;
     browserGlass.setBounds(brow);
@@ -1120,7 +1480,13 @@ void MainComponent::resized() {
     fxPage.setBounds(brow);
     {
         // FX view shares the browser footprint: 4 aux strips across.
-        auto fx = inner;
+        // The strips are children of fxPage, so lay them out in
+        // fxPage-local coordinates (origin 0,0 = brow's top-left); using
+        // MainComponent coords pushed them off the page's bottom edge and
+        // the whole view clipped to blank.
+        auto fx =
+            juce::Rectangle<int>(0, 0, brow.getWidth(), brow.getHeight())
+                .reduced(12, 10);
         const int sw = fx.getWidth() / 4;
         for (int a = 0; a < 4; ++a) {
             auto& s = auxStrips[a];

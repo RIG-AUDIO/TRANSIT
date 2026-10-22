@@ -155,6 +155,7 @@ jobs:
           NullRender DecodeTest MixerTest KeylockTest WaveformTest
           MidiQueueTest LoadScheduleTest DeckLoadTest FxScanTest
           LibraryTest MidiMapTest RecorderTest AnalyzeTest SyncTest
+          UiStateTest
 
       - name: Test under sanitizers
         # fxrack_test is JUCE-linked and intentionally not built here, so

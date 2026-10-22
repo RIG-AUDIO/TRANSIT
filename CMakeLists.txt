@@ -279,6 +279,10 @@ add_executable(WaveformTest Tests/WaveformTest.cpp)
 target_include_directories(WaveformTest PRIVATE Source)
 add_test(NAME waveform_test COMMAND WaveformTest)
 
+add_executable(UiStateTest Tests/UiStateTest.cpp)
+target_include_directories(UiStateTest PRIVATE Source)
+add_test(NAME uistate_test COMMAND UiStateTest)
+
 add_executable(MidiQueueTest Tests/MidiQueueTest.cpp)
 target_include_directories(MidiQueueTest PRIVATE Source)
 add_test(NAME midiqueue_test COMMAND MidiQueueTest)
@@ -315,9 +319,15 @@ target_compile_definitions(FxRackTest PRIVATE
   JUCE_PLUGINHOST_VST3=1)
 add_test(NAME fxrack_test COMMAND FxRackTest)
 
-add_executable(LibraryTest Tests/LibraryTest.cpp Source/Library.cpp)
+# The library index analyses tracks (tempo estimate + duration), so this
+# target needs the decoder as well.
+add_executable(LibraryTest Tests/LibraryTest.cpp Source/Library.cpp Source/Decode.cpp)
 target_include_directories(LibraryTest PRIVATE Source)
+target_include_directories(LibraryTest SYSTEM PRIVATE ${miniaudio_SOURCE_DIR})
 target_link_libraries(LibraryTest PRIVATE sqlite3)
+if(WIN32)
+  target_link_libraries(LibraryTest PRIVATE mfplat mfreadwrite mfuuid)
+endif()
 add_test(NAME library_test COMMAND LibraryTest)
 
 add_executable(MidiMapTest Tests/MidiMapTest.cpp)
