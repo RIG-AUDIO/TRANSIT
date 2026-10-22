@@ -331,3 +331,59 @@ CI floor (no overlap); TopBar MASTER/PHONES knobs picked up the same
 dark-body language. The brightness floor in the harness is unaffected
 (dark knobs replaced a small bright area; frames remain far above the
 0.1% all-dark threshold).
+
+## 14. Round 5 — Pioneer DDJ-FLX4 factory MIDI map
+
+Round 5 (`ca47ce6`, fix `aab5dda`) adds a factory map for the Pioneer
+DDJ-FLX4 USB DJ controller, selected by device name (case-insensitive
+`ddj-flx4` match) and installed on top of the learned map whenever the
+device opens. Hardware facts come from AlphaTheta's official "DDJ-FLX4
+MIDI message List" (Ver 1.0), corroborated by community reverse
+engineering; the implementation is original clean-room TRANSIT logic
+(documented provenance, no third-party mapping code). The full table
+lives in `docs/development/MIDI_MAPPINGS.md`.
+
+**Values ride the audio thread.** All analog controls (trim, three-band
+EQ, tempo, channel faders, crossfader, phones mix, CFX knobs) are
+standard 14-bit CC pairs folded on the MIDI thread in
+`MidiGrid::bind14`/`ingest14` — each half (MSB `cc`, LSB `cc+0x20`)
+updates its atomics and immediately emits the combined 0..16383 value,
+so the value queue never waits for the partner half and LSB-only fine
+steps still land under the bound MSB cell. CFX 1/2 map creatively to
+the per-deck AUX send (the hardware sends a filter position, not a send
+level). Because the FLX4 is silent until a control is moved, every
+absolute control is gated by a per-cell soft-takeover pickup while the
+device is open: the first gesture must reach or cross the current app
+value before hardware values are applied. Learned controls keep their
+existing immediate behaviour.
+
+**Buttons ride the message thread.** Play/CUE/SYNC/PFL/SHIFT notes, the
+browse press/encoder, LOAD per deck, jog nudge (CC 0x21/0x22/0x23) and
+SHIFT+jog search (CC 0x29) decode on the MIDI thread and land in a
+bounded SPSC mailbox (`Flx4ActionQueue`, 64 slots, drop-oldest-counted)
+drained by the 30 Hz UI timer: transport toggles the deck state and the
+button UI, CUE previews while held, jog applies a temporary +/-6%
+rate bend (`Deck::setBend`) released after ~100 ms of silence, browse
+scroll moves the library selection. LED echo (play/cue/sync/pfl per
+deck) is written back over the opened MIDI output with a last-sent
+cache, and a position-resync SysEx (`F0 00 40 05 00 00 04 05 00 50 02
+F7`) is sent once on activation. The device selection persists as
+`midi=` in the settings file (new `UiState` key).
+
+**Scope.** Pads (hot cues/loops/jump/FX), the BEAT FX section, phones
+level (CC unknown — marked *verify*) and scratch-style jog positioning
+are not mapped yet and are documented as such.
+
+**Round 5 CI history.** First push `ca47ce6` → red run
+`39702764044` (4 build jobs + GUI smoke: duplicate `getSend`
+declaration, a `MidiTarget` switch missing the new `Send` value, and
+two JUCE 9 `ListBox` API names). One correction (`aab5dda`) → **green
+run `39703800128` — all 8 jobs, 12m54s**. One correction round, two
+pushes total; identity scan, gcc/clang × Debug/Release, ASan+UBSan,
+TSan and GUI smoke all pass.
+
+**Shot verification.** All 29 frames from `39703800128` were reviewed:
+correct dimensions at every viewport, brightness far above the 0.1%
+floor, and the round-4 mixer design intact — the FLX4 round is
+UI-neutral (the MIDI combo and status line behave as before on a
+machine without the device).

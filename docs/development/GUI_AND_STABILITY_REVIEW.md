@@ -622,6 +622,7 @@ Severity: **C** critical (memory/lifetime corruption class) · **H** high
 | **Round 2 — metadata & zoom state** | G6 (BPM/duration columns), W8 (zoom persistence) | `library_test` + `uistate_test` green, GUI smoke frames show the new columns |
 | **Round 3 — scroll & per-file zoom memory (W9)** | W8 residual (browser scroll, per-file zoom) | extended `uistate_test` green, smoke frames unchanged |
 | **Round 4 — mixer visual upgrade (aesthetic sign-off)** | user review: bipolar EQ fill bug at detent, BLEND caption misalignment, mixer design language vs header/browser | green run 39414595074; frames show empty EQ fill at rest, glass panel, dark knobs, caption alignment |
+| **Round 5 — Pioneer DDJ-FLX4 factory MIDI map** | user milestone: map the DDJ-FLX4 perfectly (values 14-bit, transport/cue/sync/pfl notes, jog nudge/search, browse encoder, LED echo, soft takeover) | green run 39703800128 (1 correction); `midimap_test` + `uistate_test` extended; smoke frames unchanged (UI-neutral) |
 
 Out of scope by rule: loops/samplers/hotcues features, dependency major
 upgrades, merges to `main`, releases.
