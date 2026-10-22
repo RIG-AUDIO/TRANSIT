@@ -92,7 +92,7 @@ DJLook::DJLook() {
 void DJLook::drawLinearSlider(juce::Graphics& g, int x, int y, int width, int height,
                               float sliderPos, float /*min*/, float /*max*/,
                               const juce::Slider::SliderStyle style,
-                              juce::Slider&) {
+                              juce::Slider& slider) {
     const bool vertical = style == juce::Slider::LinearVertical;
     if (vertical) {
         const int cx = x + width / 2;
